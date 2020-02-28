@@ -1,0 +1,5 @@
+,name,symbol,isBaseCurrency,isInactive,overrideCurrencyFormat,displaySymbol,symbolPlacement,locale,formatSample,exchangeRate,fxRateUpdateTimezone,currencyPrecision
+0,USA,USD,true,false,false,$,_beforeNumber,_unitedStatesEnglish,"$1,234.56",1.0,_americaNewYork,_two
+1,British pound,GBP,false,false,false,£,_beforeNumber,_unitedKingdomEnglish,"£1,234.56",1.9802961,,_two
+2,Canadian dollar,CAD,false,false,false,$,_beforeNumber,_canadaEnglish,"$1,234.56",0.9929,,_two
+3,Euro,EUR,false,false,false,€,_beforeNumber,_franceFrenchEuro,"€1 234,56",1.4669532,,_two

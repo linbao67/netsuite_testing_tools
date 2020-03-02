@@ -1,0 +1,12 @@
+name
+symbol
+isBaseCurrency
+isInactive
+overrideCurrencyFormat
+displaySymbol
+symbolPlacement
+locale
+formatSample
+exchangeRate
+fxRateUpdateTimezone
+currencyPrecision

@@ -64,8 +64,12 @@ SERVICE_FIELD = {
 # Invoice includes invoice, invoice item
 # Credit Memo includes credit memo, credit memo items, credit memo apply (credit note allocation)
 ENDPOINTS = [
-    CUSTOMER, ITEM, ACCOUNTING_PERIOD, CURRENCY, TIME_BILL, CUSTOMER_PAYMENT, VENDOR_BILL, CREDIT_MEMO,
+    CUSTOMER, ITEM, ACCOUNTING_PERIOD, TIME_BILL, CUSTOMER_PAYMENT, VENDOR_BILL, CREDIT_MEMO,
     INVOICE
+]
+
+ENDPOINTS = [
+    ITEM
 ]
 
 ENDPOINTS_FIELDS = {

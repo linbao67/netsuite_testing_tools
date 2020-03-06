@@ -1,0 +1,5 @@
+,internalId,name,symbol,isBaseCurrency,isInactive
+0,1,USA,USD,true,false
+1,2,British pound,GBP,false,false
+2,3,Canadian dollar,CAD,false,false
+3,4,Euro,EUR,false,false

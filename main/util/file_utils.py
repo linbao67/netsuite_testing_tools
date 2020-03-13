@@ -7,17 +7,17 @@ import main.netsuite.endpoints as ep
 from main.path import get_xml_path, get_json_path
 
 
-def save_to_file(xml_data, endpoint, batch_id, page_number=0):
+def save_to_file(xml_data, endpoint, batch_id, page_number=1):
     file_path = get_xml_path() + '/' + endpoint + '_' + str(batch_id) + '_' + str(page_number) + '.xml'
     open(file_path, "w").write(xml_data)
 
 
-def save_to_json(json_data, endpoint, batch_id, page_number=0):
+def save_to_json(json_data, endpoint, batch_id, page_number=1):
     file_path = get_json_path() + '/' + endpoint + '_' + str(batch_id) + '_' + str(page_number) + '.json'
     open(file_path, "w").write(json.dumps(json_data))
 
 
-def read_json_file(endpoint, batch_id, page_number=0):
+def read_json_file(endpoint, batch_id, page_number=1):
     file_path = get_json_path() + '/' + endpoint + '_' + str(batch_id) + '_' + str(page_number) + '.json'
     return open(file_path, "r").read()
 
@@ -26,7 +26,7 @@ def read_xml_file(endpoint, batch_id, page_number):
     file_path = get_xml_path() + '/' + endpoint + '_' + str(batch_id) + '_' + str(page_number) + '.xml'
     return open(file_path, "r").read()
 
-def merge_file(self, endpoint, batch_id):
+def merge_file(endpoint, batch_id):
 
     file_path = get_json_path()
     tmp_file_name = endpoint + ".tmp"

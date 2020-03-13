@@ -51,7 +51,8 @@ def passport(email, password, realm):
                    '<urn:passport>' \
                    '<urn1:email>{}</urn1:email>' \
                    '<urn1:password>{}</urn1:password>' \
-                   '<urn1:account>{}</urn1:account>' \
+                   '<urn1:account>{}</urn1:account>'\
+                   '<urn1:role internalId = "3"/>'\
                    '</urn:passport>'.format(email, password, realm.upper())
     return passport_xml
 

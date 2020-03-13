@@ -68,10 +68,6 @@ ENDPOINTS = [
     INVOICE
 ]
 
-ENDPOINTS = [
-    ITEM
-]
-
 ENDPOINTS_FIELDS = {
     CUSTOMER: {
         SERVICE: SEARCH,

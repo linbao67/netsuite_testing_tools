@@ -46,10 +46,10 @@ class NetsuiteClient(object):
             sync_end_time = datetime.datetime.utcnow().replace(microsecond=0).replace(
                 tzinfo=pytz.utc).isoformat()
 
-        page_index_str = get_property(endpoint, 'PAGE_INDEX')
-        page_index = 0 if page_index_str == '' else int(page_index_str)
+        page_index = int(get_property(endpoint, 'PAGE_INDEX'))
+        print('endpoint {} page index {}'.format(endpoint, page_index))
         logging.info("Start ingest endpoint {} with page_index {}".format(endpoint, page_index))
-        if page_index == 0:
+        if page_index == 1:
             service = ep.SEARCH
             soap_service_xml = create_soap_search_service(self.generate_passport(), endpoint,
                                                           sync_start_time=sync_start_time,
@@ -67,10 +67,10 @@ class NetsuiteClient(object):
         response = requests.post(url='https://tstdrv2177818.suitetalk.api.netsuite.com/services/NetSuitePort_2019_2',
                                  headers=headers,
                                  data=soap_service_xml)
-        logging.info("Save xml file for endpoint {} with page index {}".format(endpoint, page_index))
+        print("Save xml file for endpoint {} with page index {}".format(endpoint, page_index))
         save_to_file(response.text, endpoint, self.batch_id, page_index)
 
-        force_list = {'record', 'customField'}
+        force_list = {'record', 'item', 'customField', 'expCost', 'itemCost'}
         response_dict = xmltodict.parse(response.text, process_namespaces=True, namespaces=ep.ESCAPE_NAMESPACES,
                                         attr_prefix='', cdata_key='', force_list=force_list)
         response_dict.pop('customFieldList', None)
@@ -79,17 +79,17 @@ class NetsuiteClient(object):
         search_id, total_pages, records = self.get_sync_info(response_json, service)
         save_to_json(records, endpoint, self.batch_id, page_index)
 
-        if page_index == 0:
-            self.udpate_sync_info(endpoint, search_id, total_pages, '1')
+        if page_index == 1:
+            self.udpate_sync_info(endpoint, search_id, total_pages, '2')
 
-        if page_index + 1 == int(total_pages):
+        if page_index == int(total_pages):
             endpoint_index = endpoint_index + 1
             property_list = [{'config_type': 'parameters',
                               'name': 'ENDPOINT_INDEX',
                               'value': str(endpoint_index)},
                              {'config_type': endpoint,
                               'name': 'PAGE_INDEX',
-                              'value': '0'}]
+                              'value': '1'}]
             update_property_list(property_list)
 
         else:
@@ -102,7 +102,7 @@ class NetsuiteClient(object):
             return True
 
     def update_batch_id(self):
-        self.batch_id += str(int(self.batch_id) + 1)
+        self.batch_id = str(int(self.batch_id) + 1)
         set_property('parameters', 'BATCH_ID', self.batch_id)
 
     def udpate_sync_info(self, endpoint, search_id, total_pages, page_index=0):
@@ -119,6 +119,8 @@ class NetsuiteClient(object):
 
     def get_sync_info(self, response_json, service):
 
+        print(response_json)
+
         response_field = ep.SERVICE_FIELD[service][ep.RESPONSE_FIELD]
         result_field = ep.SERVICE_FIELD[service][ep.RESULT_FIELD]
 
@@ -130,15 +132,14 @@ class NetsuiteClient(object):
 
         xml_string = read_xml_file(endpoint, batch_id, page_index)
 
-        force_list = {'record', 'customField'}
+        force_list = {'record', 'item', 'customField', 'expCost', 'itemCost'}
         response_dict = xmltodict.parse(xml_string, process_namespaces=True, namespaces=ep.ESCAPE_NAMESPACES,
                                         attr_prefix='', cdata_key='', force_list=force_list)
-        response_dict.pop('customFieldList', None)
         response_json = json.loads(json.dumps(response_dict))
-
+        response_json.pop('customFieldList', None)
         if endpoint == ep.CURRENCY:
             service = ep.GET_ALL
-        elif page_index == 0:
+        elif page_index == 1:
             service = ep.SEARCH
         else:
             service = ep.SEARCH_MORE_WITH_ID
@@ -147,7 +148,6 @@ class NetsuiteClient(object):
         result_field = ep.SERVICE_FIELD[service][ep.RESULT_FIELD]
 
         records = response_json['Envelope']['Body'][response_field][result_field]['recordList']['record']
-
         save_to_json(records, endpoint, self.batch_id, page_index)
 
     def generate_passport(self):
@@ -161,11 +161,19 @@ if __name__ == '__main__':
     netsuite_client = NetsuiteClient()
     # if batch_id == 0:
     #     netsuite_client.generate_currency()
-    result = True
-    while result:
-        result = netsuite_client.generate_xml()
+    # result = True
+    # while result:
+    #     result = netsuite_client.generate_xml()
 
-    netsuite_client.update_batch_id()
-    # netsuite_client.regenerate_json_file(ep.CURRENCY, 0, 0)
-    # netsuite_client.regenerate_json_file(ep.CUSTOMER, 1, 0)
-    # netsuite_client.regenerate_json_file(ep.CUSTOMER, 1, 1)
+    # netsuite_client.update_batch_id()
+    netsuite_client.regenerate_json_file(ep.INVOICE, 1, 1)
+    netsuite_client.regenerate_json_file(ep.INVOICE, 1, 2)
+    netsuite_client.regenerate_json_file(ep.INVOICE, 1, 3)
+    netsuite_client.regenerate_json_file(ep.INVOICE, 1, 4)
+    netsuite_client.regenerate_json_file(ep.INVOICE, 1, 5)
+    netsuite_client.regenerate_json_file(ep.INVOICE, 1, 6)
+    netsuite_client.regenerate_json_file(ep.INVOICE, 1, 7)
+    netsuite_client.regenerate_json_file(ep.INVOICE, 1, 8)
+    netsuite_client.regenerate_json_file(ep.INVOICE, 1, 9)
+    netsuite_client.regenerate_json_file(ep.INVOICE, 1, 10)
+    netsuite_client.regenerate_json_file(ep.INVOICE, 1, 11)

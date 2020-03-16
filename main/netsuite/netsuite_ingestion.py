@@ -70,7 +70,7 @@ class NetsuiteClient(object):
         print("Save xml file for endpoint {} with page index {}".format(endpoint, page_index))
         save_to_file(response.text, endpoint, self.batch_id, page_index)
 
-        force_list = {'record', 'item', 'customField', 'expCost', 'itemCost'}
+        force_list = {'record', 'item', 'customField', 'expCost', 'itemCost', 'time', 'giftCertRedemption'}
         response_dict = xmltodict.parse(response.text, process_namespaces=True, namespaces=ep.ESCAPE_NAMESPACES,
                                         attr_prefix='', cdata_key='', force_list=force_list)
         response_dict.pop('customFieldList', None)
@@ -132,7 +132,7 @@ class NetsuiteClient(object):
 
         xml_string = read_xml_file(endpoint, batch_id, page_index)
 
-        force_list = {'record', 'item', 'customField', 'expCost', 'itemCost'}
+        force_list = {'record', 'item', 'customField', 'expCost', 'itemCost', 'time', 'giftCertRedemption'}
         response_dict = xmltodict.parse(xml_string, process_namespaces=True, namespaces=ep.ESCAPE_NAMESPACES,
                                         attr_prefix='', cdata_key='', force_list=force_list)
         response_json = json.loads(json.dumps(response_dict))

@@ -11,12 +11,12 @@ def get_project_folder():
     return project_path
 
 
-def get_csv_path():
+def get_csv_path(folder_name='netsuite'):
     """
     generate the file name base for destination files
     :return:
     """
-    source_file_path = os.path.abspath(os.path.join(APP_PATH, '../resources/netsuite/csv/'))
+    source_file_path = os.path.abspath(os.path.join(APP_PATH, '../resources/{}/csv/'.format(folder_name)))
 
     return source_file_path
 

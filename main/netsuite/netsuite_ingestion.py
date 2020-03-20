@@ -70,7 +70,7 @@ class NetsuiteClient(object):
         print("Save xml file for endpoint {} with page index {}".format(endpoint, page_index))
         save_to_file(response.text, endpoint, self.batch_id, page_index)
 
-        force_list = {'record', 'item', 'customField', 'expCost', 'itemCost', 'time', 'giftCertRedemption'}
+        force_list = {'record', 'item', 'customField', 'expCost', 'itemCost', 'time', 'giftCertRedemption', 'apply'}
         response_dict = xmltodict.parse(response.text, process_namespaces=True, namespaces=ep.ESCAPE_NAMESPACES,
                                         attr_prefix='', cdata_key='', force_list=force_list)
         response_dict.pop('customFieldList', None)
@@ -159,21 +159,31 @@ class NetsuiteClient(object):
 
 if __name__ == '__main__':
     netsuite_client = NetsuiteClient()
-    # if batch_id == 0:
-    #     netsuite_client.generate_currency()
-    # result = True
-    # while result:
-    #     result = netsuite_client.generate_xml()
+    if netsuite_client.batch_id == 0:
+        netsuite_client.generate_currency()
+    result = True
+    while result:
+        result = netsuite_client.generate_xml()
 
     # netsuite_client.update_batch_id()
-    netsuite_client.regenerate_json_file(ep.INVOICE, 1, 1)
-    netsuite_client.regenerate_json_file(ep.INVOICE, 1, 2)
-    netsuite_client.regenerate_json_file(ep.INVOICE, 1, 3)
-    netsuite_client.regenerate_json_file(ep.INVOICE, 1, 4)
-    netsuite_client.regenerate_json_file(ep.INVOICE, 1, 5)
-    netsuite_client.regenerate_json_file(ep.INVOICE, 1, 6)
-    netsuite_client.regenerate_json_file(ep.INVOICE, 1, 7)
-    netsuite_client.regenerate_json_file(ep.INVOICE, 1, 8)
-    netsuite_client.regenerate_json_file(ep.INVOICE, 1, 9)
-    netsuite_client.regenerate_json_file(ep.INVOICE, 1, 10)
-    netsuite_client.regenerate_json_file(ep.INVOICE, 1, 11)
+    # netsuite_client.regenerate_json_file(ep.INVOICE, 1, 1)
+    # netsuite_client.regenerate_json_file(ep.INVOICE, 1, 2)
+    # netsuite_client.regenerate_json_file(ep.INVOICE, 1, 3)
+    # netsuite_client.regenerate_json_file(ep.INVOICE, 1, 4)
+    # netsuite_client.regenerate_json_file(ep.INVOICE, 1, 5)
+    # netsuite_client.regenerate_json_file(ep.INVOICE, 1, 6)
+    # netsuite_client.regenerate_json_file(ep.INVOICE, 1, 7)
+    # netsuite_client.regenerate_json_file(ep.INVOICE, 1, 8)
+    # netsuite_client.regenerate_json_file(ep.INVOICE, 1, 9)
+    # netsuite_client.regenerate_json_file(ep.INVOICE, 1, 10)
+    # netsuite_client.regenerate_json_file(ep.INVOICE, 1, 11)
+
+    # netsuite_client.regenerate_json_file(ep.CUSTOMER_PAYMENT, 1, 1)
+    # netsuite_client.regenerate_json_file(ep.CUSTOMER_PAYMENT, 1, 2)
+    # netsuite_client.regenerate_json_file(ep.CUSTOMER_PAYMENT, 1, 3)
+    # netsuite_client.regenerate_json_file(ep.CUSTOMER_PAYMENT, 1, 4)
+    #
+    # netsuite_client.regenerate_json_file(ep.CREDIT_MEMO, 1, 1)
+
+
+

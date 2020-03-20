@@ -1,16 +1,18 @@
 import fnmatch
 import json
 import os
-from datetime import datetime, timedelta
 
 import pandas as pd
 
 import main.netsuite.endpoints as ep
 from main.path import get_csv_path, get_json_path
 from main.util.config_util import get_property
+from main.util.datetime_util import getUTCDateTime, add_days
 from main.util.file_utils import read_json_file
 
 DATE_FORMAT = '%Y-%m-%dT%H:%M:%S'  # 2019-09-01T00:00:00.000-07:00
+DATE_TZONE_FORMAT = '%Y-%m-%dT%H:%M:%S%z'
+DUE_DATE_FORMAT = '%Y-%m-%d'
 
 
 class NetsuiteClient(object):
@@ -114,13 +116,16 @@ class NetsuiteClient(object):
             print('credit memo internal id:{} credit memo number: {}'.format(credit_memo_id, credit_note_number))
             amount = record.get('total', '')
             date = record.get('tranDate', '')
+            date = getUTCDateTime(date, DUE_DATE_FORMAT) if date else None
             currency_internal_id = record['currency']['internalId']
             if currency_internal_id is not None:
                 currency = df_currency[df_currency['internalId'] == int(currency_internal_id)]['symbol'].values[0]
 
             currency_rate = record['exchangeRate']
             created_at = record.get('createdDate')
+            created_at = getUTCDateTime(created_at) if created_at else None
             updated_at = record.get('lastModifiedDate')
+            updated_at = getUTCDateTime(updated_at) if updated_at else None
 
             credit_memo.append(dict(id=credit_memo_id,
                                     credit_note_number=credit_note_number,
@@ -135,7 +140,7 @@ class NetsuiteClient(object):
 
             discount_rate = record.get('discountRate')
             is_pre_tax = None
-            if 'discountItem' in record:
+            if 'discountTotal' in record:
                 discount_item = record['discountItem']
                 discountItem_internalId = discount_item['internalId']
                 discountItem_name = discount_item['name']
@@ -144,7 +149,7 @@ class NetsuiteClient(object):
                 is_pre_tax = df_item[df_item['internalId'] == int(discountItem_internalId)]['isPreTax'].values[0]
                 tgt_quantity = 1
                 tgt_unit_price = 0
-                tgt_discount = -1*discountTotal
+                tgt_discount = -1 * discountTotal
                 tgt_net_total = 0
                 tgt_tax_amount = 0
                 tgt_total = tgt_net_total + tgt_tax_amount - tgt_discount
@@ -183,7 +188,8 @@ class NetsuiteClient(object):
                                               src_handlingTax1Rate=None,
                                               cal_sub_total=None,
                                               cal_discount_rate=None,
-                                              tgt_tax_amount=tgt_tax_amount
+                                              tgt_tax_amount=tgt_tax_amount,
+                                              updated_at=updated_at
                                               ))
 
             if 'itemList' in record:
@@ -234,7 +240,7 @@ class NetsuiteClient(object):
                                     tgt_unit_price = amount
 
                                 if item_type == 'DiscountItem':
-                                    tgt_discount = -1*amount
+                                    tgt_discount = -1 * amount
                                 else:
                                     tgt_discount = 0
 
@@ -252,9 +258,9 @@ class NetsuiteClient(object):
                                 tax_rate_1 = float(item_line.get('taxRate1', 0))
 
                                 if discount_rate is not None and discount_rate[-1] == '%':
-                                    cal_discount_rate = 1 - -1*float(discount_rate[:-1]) * 0.01
+                                    cal_discount_rate = 1 - -1 * float(discount_rate[:-1]) * 0.01
                                 elif discount_rate is not None and cal_sub_total != 0.0:
-                                    cal_discount_rate = 1 - -1*discountTotal / cal_sub_total
+                                    cal_discount_rate = 1 - -1 * discountTotal / cal_sub_total
                                 else:
                                     cal_discount_rate = 1
 
@@ -298,7 +304,8 @@ class NetsuiteClient(object):
                                                               src_discountRate=discount_rate,
                                                               cal_sub_total=cal_sub_total,
                                                               cal_discount_rate=cal_discount_rate,
-                                                              tgt_tax_amount=tgt_tax_amount))
+                                                              tgt_tax_amount=tgt_tax_amount,
+                                                              updated_at=updated_at))
 
             if 'shippingCost' in record:
                 ship_method = record['shipMethod']
@@ -351,7 +358,8 @@ class NetsuiteClient(object):
                                               src_discountRate=None,
                                               cal_sub_total=None,
                                               cal_discount_rate=None,
-                                              tgt_tax_amount=tgt_tax_amount
+                                              tgt_tax_amount=tgt_tax_amount,
+                                              updated_at=updated_at
 
                                               ))
 
@@ -403,7 +411,8 @@ class NetsuiteClient(object):
                                               src_discountRate=None,
                                               cal_sub_total=None,
                                               cal_discount_rate=None,
-                                              tgt_tax_amount=tgt_tax_amount))
+                                              tgt_tax_amount=tgt_tax_amount,
+                                              updated_at=updated_at))
 
         df_creditMemo = pd.DataFrame(credit_memo)
         df_credit_memo_line = pd.DataFrame(credit_memo_lines)
@@ -419,11 +428,56 @@ class NetsuiteClient(object):
 
         df_credit_memo_line.to_csv(line_csv_path)
 
+    def convert_customer_payment_apply_to_csv(self):
+        records = self.read_json_files(ep.CUSTOMER_PAYMENT, self.batch_id)
+        # items = self.read_json_files(ep.ITEM, 0)
+        result = []
+        for record in records:
+            if 'applyList' in record:
+                internal_id = record.get('internalId')
+                for item in record['applyList']['apply']:
+                    if item.get('apply', 'false')[0].lower() == 'true' and item.get('type', 'other').lower() == \
+                            'invoice':
+                        doc = item['doc']
+                        line = item['line']
+                        amount = item['amount']
+                        result.append(dict(internalId=internal_id,
+                                           doc=doc,
+                                           line=line,
+                                           amount=amount))
+        df = pd.DataFrame(result)
+        csv_path = get_csv_path() + '/' + ep.CUSTOMER_PAYMENT + '_apply_' + str(self.batch_id) + '.csv'
+        df.to_csv(csv_path)
+
+    def convert_credit_memo_apply_to_csv(self):
+
+        records = self.read_json_files(ep.CREDIT_MEMO, self.batch_id)
+        # items = self.read_json_files(ep.ITEM, 0)
+        result = []
+        for record in records:
+            if 'applyList' in record:
+                internal_id = record.get('internalId')
+                for item in record['applyList']['apply']:
+                    if item.get('apply', 'false')[0].lower() == 'true' and item.get('type', 'other').lower() == \
+                            'invoice':
+                        doc = item['doc']
+                        line = item['line']
+                        amount = item['amount']
+                        result.append(dict(internalId=internal_id,
+                                           doc=doc,
+                                           line=line,
+                                           amount=amount))
+        df = pd.DataFrame(result)
+        csv_path = get_csv_path() + '/' + ep.CREDIT_MEMO + '_apply_' + str(self.batch_id) + '.csv'
+        df.to_csv(csv_path)
+
     def convert_invoice_to_csv(self):
 
         df_currency = pd.read_csv(os.path.join(get_csv_path(), ep.CURRENCY + '_1.csv'))
         df_item = pd.read_csv(os.path.join(get_csv_path(), 'item_ref.csv'))
         df_vendor_bill = pd.read_csv(os.path.join(get_csv_path(), ep.VENDOR_BILL + '_' + str(self.batch_id) + '.csv'))
+        df_customer_payment_apply = pd.read_csv(os.path.join(get_csv_path(), 'customerPayment_apply_1.csv'))
+        df_credit_memo_apply = pd.read_csv(os.path.join(get_csv_path(), 'creditMemo_apply_1.csv'))
 
         records = self.read_json_files(ep.INVOICE, self.batch_id)
         invoice = []
@@ -432,10 +486,49 @@ class NetsuiteClient(object):
             invoice_id = record.get('internalId', '')
             invoice_number = record.get('tranId', 'sales_invoice' + str(invoice_id))
             print('Invoice internal id:{}  number: {}'.format(invoice_id, invoice_number))
+
+            billing_name = None
+            billing_address_line_1 = None
+            billing_address_line_2 = None
+            billing_city = None
+            billing_region = None
+            billing_postcode = None
+            billing_country = None
+            shipping_name = None
+            shipping_address_line_1 = None
+            shipping_address_line_2 = None
+            shipping_city = None
+            shipping_region = None
+            shipping_postcode = None
+            shipping_country = None
+
+            if 'billingAddress' in record:
+                billing_name = record['billingAddress'].get('addressee')
+                if billing_name is None:
+                    billing_name = record['billingAddress'].get('attention')
+                billing_address_line_1 = record['billingAddress'].get('addr1')
+                billing_address_line_2 = record['billingAddress'].get('addr2')
+                billing_city= record['billingAddress'].get('city')
+                billing_region=record['billingAddress'].get('state')
+                billing_postcode= record['billingAddress'].get('zip')
+                billing_country = record['billingAddress'].get('country')
+
+            if 'shippingAddress' in record:
+                shipping_name = record['shippingAddress'].get('addressee')
+                if shipping_name is None:
+                    shipping_name = record['shippingAddress'].get('attention')
+                shipping_address_line_1 = record['shippingAddress'].get('addr1')
+                shipping_address_line_2 = record['shippingAddress'].get('addr2')
+                shipping_city = record['shippingAddress'].get('city')
+                shipping_region = record['shippingAddress'].get('state')
+                shipping_postcode = record['shippingAddress'].get('zip')
+                shipping_country = record['shippingAddress'].get('country')
+
+
             amount = record.get('total', '')
             date = record.get('tranDate')
             due_date = record.get('dueDate')
-            tgt_due_date = due_date
+
             terms = record.get('terms')
             terms_name = terms.get('name') if terms else None
             if due_date is None:
@@ -444,9 +537,12 @@ class NetsuiteClient(object):
                         no_of_days = int(terms_name[4:])
                     else:
                         no_of_days = 0
-                    tgt_due_date = self.add_days(date, no_of_days)
+                    tgt_due_date = add_days(date, no_of_days, DUE_DATE_FORMAT)
                 else:
-                    tgt_due_date = self.add_days(date, 30)
+                    tgt_due_date = add_days(date, 30, DUE_DATE_FORMAT)
+            else:
+                tgt_due_date = getUTCDateTime(due_date, DUE_DATE_FORMAT)
+
             src_invoice_sub_total = float(record.get('subTotal', 0.0))
 
             # sum of line.net_total except giftCertRedemption
@@ -456,6 +552,7 @@ class NetsuiteClient(object):
             # cal_sum_discount for discount_total sum of line.discount
             cal_sum_discount = 0.0
             tgt_invoice_outstanding_total = 0.0  # todo
+            cal_redemption_total = 0.0
             # sum of line.total where tax_amount = 0 except paymentItem and giftCertRedemption
             tgt_invoice_tax_exempt_total = 0.0
 
@@ -463,8 +560,11 @@ class NetsuiteClient(object):
             if currency_internal_id is not None:
                 currency = df_currency[df_currency['internalId'] == int(currency_internal_id)]['symbol'].values[0]
             currency_rate = record['exchangeRate']
-            created_at = record.get('createdDate')
-            updated_at = record.get('lastModifiedDate')
+            created_date = record.get('createdDate')
+            created_at = getUTCDateTime(created_date) if created_date else None
+
+            last_modified_date = record.get('lastModifiedDate')
+            updated_at = getUTCDateTime(last_modified_date) if last_modified_date else None
 
             # Section 1: handling transaction discount if exists for sub total
             discount_item = record.get('discountItem')
@@ -560,9 +660,79 @@ class NetsuiteClient(object):
                             df_tmp = df_item[df_item['internalId'] == int(item_id)]
                             item_type = df_tmp['itemType'].values[0]
 
-                    if 'item' not in item_line or (item_id != 0 and item_type not in ['ItemGroup', 'DescriptionItem',
-                                                                                      'SubtotalItem']):
-                        description = name
+                            if item_type not in ['ItemGroup', 'DescriptionItem', 'SubtotalItem']:
+                                description = name
+                                quantity = float(item_line['quantity']) if 'quantity' in item_line else None
+                                rate = item_line.get('rate')
+                                amount = float(item_line.get('amount'))
+                                print('quantity {} rate {} amount {}:'.format(quantity, rate, amount))
+                                if quantity is not None:
+                                    tgt_quantity = quantity
+                                elif rate is not None and rate[-1] != '%' and float(rate) != 0.0:
+                                    tgt_quantity = amount / float(rate)
+                                else:
+                                    tgt_quantity = 1
+
+                                if item_type == 'DiscountItem':
+                                    tgt_unit_price = 0
+                                elif rate is not None and rate[-1] != '%' and float(rate) != 0.0:
+                                    tgt_unit_price = rate
+                                elif quantity is not None:
+                                    tgt_unit_price = amount / quantity
+                                else:
+                                    tgt_unit_price = amount
+
+                                if item_type == 'DiscountItem':
+                                    tgt_discount = -1 * amount
+                                    cal_sum_discount = cal_sum_discount + tgt_discount
+                                else:
+                                    tgt_discount = 0
+
+                                if item_type == 'DiscountItem':
+                                    tgt_net_total = 0
+                                else:
+                                    tgt_net_total = amount
+
+                                tgt_invoice_net_total = tgt_invoice_net_total + tgt_net_total
+
+                                if 'taxCode' in item_line:
+                                    tax_code = item_line['taxCode'].get('name')
+                                else:
+                                    tax_code = None
+                                    print('Credit Memo {} Item {} doesnt have tax_code'.format(invoice_number,
+                                                                                               item_id))
+                                tax_rate_1 = float(item_line.get('taxRate1', 0))
+
+                                if str(is_pre_tax).upper() == 'TRUE':
+                                    print('isPreTax {} is TRUE'.format(is_pre_tax))
+                                    tgt_tax_amount = amount * cal_discount_rate * tax_rate_1 * 0.01
+                                else:
+                                    tgt_tax_amount = amount * tax_rate_1 * 0.01
+                                tgt_total = tgt_net_total + tgt_tax_amount - tgt_discount
+                                if item_type != 'PaymentItem' and tgt_tax_amount == 0.0:
+                                    tgt_invoice_tax_exempt_total = tgt_invoice_tax_exempt_total + tgt_total
+                                invoice_lines.append(dict(invoice_id=invoice_id,
+                                                          invoice_number=invoice_number,
+                                                          src_internalId=item_id,
+                                                          tgt_description=description,
+                                                          tgt_quantity=tgt_quantity,
+                                                          tgt_discount=tgt_discount,
+                                                          tgt_total=tgt_total,
+                                                          tgt_unit_price=tgt_unit_price,
+                                                          tgt_net_total=tgt_net_total,
+                                                          tgt_tax_code=tax_code,
+                                                          tgt_tax_amount=tgt_tax_amount,
+                                                          cal_sub_total=cal_sub_total,
+                                                          cal_discount_rate=cal_discount_rate,
+                                                          cal_item_type=item_type,
+                                                          isPreTax=is_pre_tax,
+                                                          src_quantity=quantity,
+                                                          src_amount=amount,
+                                                          src_rate=rate,
+                                                          src_taxRate1=tax_rate_1,
+                                                          updated_at=updated_at))
+                    else:
+
                         quantity = float(item_line['quantity']) if 'quantity' in item_line else None
                         rate = item_line.get('rate')
                         amount = float(item_line.get('amount'))
@@ -574,25 +744,16 @@ class NetsuiteClient(object):
                         else:
                             tgt_quantity = 1
 
-                        if item_type == 'DiscountItem':
-                            tgt_unit_price = 0
-                        elif rate is not None and rate[-1] != '%' and float(rate) != 0.0:
+                        if rate is not None and rate[-1] != '%' and float(rate) != 0.0:
                             tgt_unit_price = rate
                         elif quantity is not None:
                             tgt_unit_price = amount / quantity
                         else:
                             tgt_unit_price = amount
 
-                        if item_type == 'DiscountItem':
-                            tgt_discount = -1 * amount
-                            cal_sum_discount = cal_sum_discount + tgt_discount
-                        else:
-                            tgt_discount = 0
+                        tgt_discount = 0
 
-                        if item_type == 'DiscountItem':
-                            tgt_net_total = 0
-                        else:
-                            tgt_net_total = amount
+                        tgt_net_total = amount
 
                         tgt_invoice_net_total = tgt_invoice_net_total + tgt_net_total
 
@@ -614,8 +775,8 @@ class NetsuiteClient(object):
                             tgt_invoice_tax_exempt_total = tgt_invoice_tax_exempt_total + tgt_total
                         invoice_lines.append(dict(invoice_id=invoice_id,
                                                   invoice_number=invoice_number,
-                                                  src_internalId=item_id,
-                                                  tgt_description=description,
+                                                  src_internalId=None,
+                                                  tgt_description=None,
                                                   tgt_quantity=tgt_quantity,
                                                   tgt_discount=tgt_discount,
                                                   tgt_total=tgt_total,
@@ -630,7 +791,9 @@ class NetsuiteClient(object):
                                                   src_quantity=quantity,
                                                   src_amount=amount,
                                                   src_rate=rate,
-                                                  src_taxRate1=tax_rate_1))
+                                                  src_taxRate1=tax_rate_1,
+                                                  updated_at=updated_at))
+
             # section 3: timeList
             if 'timeList' in record:
                 time_list = record['timeList']['time']
@@ -686,7 +849,8 @@ class NetsuiteClient(object):
                                                   src_quantity=quantity,
                                                   src_amount=amount,
                                                   src_rate=rate,
-                                                  src_taxRate1=tax_rate_1))
+                                                  src_taxRate1=tax_rate_1,
+                                                  updated_at=updated_at))
 
             # section 4: itemCostList
             if 'itemCostList' in record:
@@ -768,7 +932,8 @@ class NetsuiteClient(object):
                                                           src_amount=amount,
                                                           src_cost=cost,
                                                           src_rate=None,
-                                                          src_taxRate1=tax_rate_1))
+                                                          src_taxRate1=tax_rate_1,
+                                                          updated_at=updated_at))
             # section 5: expCostList
             if 'expCostList' in record:
                 exp_cost_list = record['expCostList']['expCost']
@@ -815,7 +980,8 @@ class NetsuiteClient(object):
                                                   src_quantity=None,
                                                   src_amount=amount,
                                                   src_rate=None,
-                                                  src_taxRate1=tax_rate_1
+                                                  src_taxRate1=tax_rate_1,
+                                                  updated_at=updated_at
                                                   ))
             # section 6 itemCostDiscount
             if 'itemCostDiscount' in record:
@@ -834,7 +1000,7 @@ class NetsuiteClient(object):
                     tgt_unit_price = item_cost_discount_amount
 
                 if item_type == 'DiscountItem':
-                    tgt_discount = -1*item_cost_discount_amount
+                    tgt_discount = -1 * item_cost_discount_amount
                     cal_sum_discount = cal_sum_discount + tgt_discount
                 elif item_type == 'MarkupItem':
                     tgt_discount = 0
@@ -882,7 +1048,8 @@ class NetsuiteClient(object):
                                           src_timeTaxRate1=item_cost_tax_rate,
                                           src_quantity=None,
                                           src_amount=None,
-                                          src_rate=None
+                                          src_rate=None,
+                                          updated_at=updated_at
                                           ))
 
             # section 7 expCostDiscount
@@ -952,7 +1119,8 @@ class NetsuiteClient(object):
                                           src_timeTaxRate1=exp_cost_tax_rate,
                                           src_quantity=None,
                                           src_amount=None,
-                                          src_rate=None
+                                          src_rate=None,
+                                          updated_at=updated_at
                                           ))
             # section 8 timeDiscount
             if 'timeDiscount' in record:
@@ -986,9 +1154,9 @@ class NetsuiteClient(object):
                 elif item_type == 'MarkupItem':
                     tgt_net_total = time_discount_amount
 
-                time_tax_code = record['taxCode']['name'] if 'taxCode' in record else None  #
+                time_tax_code = record['timeTaxCode']['name'] if 'timeTaxCode' in record else None  #
 
-                time_tax_rate = float(record.get('taxRate1', 0))
+                time_tax_rate = float(record.get('timeTaxRate1', 0))
 
                 tgt_invoice_net_total = tgt_invoice_net_total + tgt_net_total
 
@@ -1017,7 +1185,8 @@ class NetsuiteClient(object):
                                           cal_item_type=item_type,
                                           isPreTax=is_pre_tax,
                                           src_timeDiscountAmount=time_discount_amount,
-                                          src_taxRate1=time_tax_rate
+                                          src_taxRate1=time_tax_rate,
+                                          updated_at=updated_at
                                           ))
 
             # section 9 shippingCost
@@ -1062,7 +1231,8 @@ class NetsuiteClient(object):
                                           cal_item_type='ShipItem',
                                           isPreTax=is_pre_tax,
                                           src_shippingCost=shipping_cost,
-                                          src_shippingTax1Rate=shipping_tax_rate
+                                          src_shippingTax1Rate=shipping_tax_rate,
+                                          updated_at=updated_at
 
                                           ))
 
@@ -1102,7 +1272,8 @@ class NetsuiteClient(object):
                                           cal_item_type=None,
                                           isPreTax=is_pre_tax,
                                           src_handlingCost=handling_cost,
-                                          src_handlingTax1Rate=handling_tax_rate))
+                                          src_handlingTax1Rate=handling_tax_rate,
+                                          updated_at=updated_at))
 
             # section 11 redemptionList
             if 'giftCertRedemptionList' in record:
@@ -1111,7 +1282,7 @@ class NetsuiteClient(object):
                     name = redemption['authCode']['name']
                     description = name
                     applied_amount = float(redemption.get('authCodeApplied'))
-
+                    cal_redemption_total = cal_redemption_total + applied_amount
                     tgt_quantity = 1
                     tgt_unit_price = applied_amount
                     tgt_discount = 0
@@ -1134,11 +1305,25 @@ class NetsuiteClient(object):
                                               cal_discount_rate=None,
                                               cal_item_type=None,
                                               isPreTax=is_pre_tax,
-                                              src_amount=applied_amount))
+                                              src_amount=applied_amount,
+                                              updated_at=updated_at))
 
-            tgt_invoice_discount_total = -1*discount_total + cal_sum_discount
+            tgt_invoice_discount_total = -1 * discount_total + cal_sum_discount
             # sum of line.net_total - sum(line.discountTotal) + sum(line.
+
             tgt_invoice_due_total = tgt_invoice_net_total - tgt_invoice_discount_total + tgt_invoice_tax_total
+
+
+            df_tmp_1 = df_customer_payment_apply[df_customer_payment_apply['doc'] == int(invoice_id)][[
+                'amount']]
+            cal_customer_payment_apply = df_tmp_1.sum().values[0]
+
+
+            cal_credit_memo_apply = df_credit_memo_apply[df_credit_memo_apply['doc'] == int(invoice_id)][[
+               'amount']].sum().values[0]
+
+            print('customer payment {} credit memo apply {}'.format(cal_customer_payment_apply,cal_credit_memo_apply))
+            tgt_invoice_outstanding_total = tgt_invoice_due_total + cal_redemption_total - cal_credit_memo_apply - cal_customer_payment_apply
             tgt_invoice_apply_tax_after_discount = is_pre_tax
             invoice.append(dict(id=invoice_id,
                                 invoice_number=invoice_number,
@@ -1158,6 +1343,20 @@ class NetsuiteClient(object):
                                 tgt_tax_exempt_total=tgt_invoice_tax_exempt_total,
                                 tgt_apply_tax_after_discount=tgt_invoice_apply_tax_after_discount,
                                 src_discountTotal=discount_total,
+                                billing_name=billing_name,
+                                billing_address_line_1=billing_address_line_1,
+                                billing_address_line_2=billing_address_line_2,
+                                billing_city=billing_city,
+                                billing_region=billing_region,
+                                billing_postcode=billing_postcode,
+                                billing_country=billing_country,
+                                shipping_name=shipping_name,
+                                shipping_address_line_1=shipping_address_line_1,
+                                shipping_address_line_2=shipping_address_line_2,
+                                shipping_city=shipping_city,
+                                shipping_region=shipping_region,
+                                shipping_postcode=shipping_postcode,
+                                shipping_country=shipping_country,
                                 created_at=created_at,
                                 updated_at=updated_at
                                 ))
@@ -1191,14 +1390,8 @@ class NetsuiteClient(object):
                     items.extend(json.loads(src.read()))
         return items
 
-    def add_days(self, date_string, days):
-        position = date_string.index('.')
-        calc_date = datetime.strptime(date_string[:position], DATE_FORMAT) + timedelta(days=days)
-        calc_date_str = datetime.strftime(calc_date, DATE_FORMAT) + date_string[position:]
-        return calc_date_str
-
 
 if __name__ == '__main__':
     testing = NetsuiteClient()
 
-    testing.convert_invoice_to_csv()
+    testing.convert_credit_memo_to_csv()

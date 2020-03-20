@@ -548,7 +548,8 @@ class NetsuiteTestingClient(object):
             print("attributes_tax_amount passed")
 
     def generate_credit_memo_testing_report(self):
-        df_pubsub = pd.read_csv(os.path.join(get_csv_path('pubsub'),'creditMemo.csv'))
+        df_pubsub = pd.read_csv(os.path.join(get_csv_path('pubsub'),ep.CREDIT_MEMO + '_' + str(self.batch_id) +
+                                             '.csv'))
         df_source = pd.read_csv(os.path.join(get_csv_path(), ep.CREDIT_MEMO + '_' + str(self.batch_id) +
                                              '_raw.csv'))
         df_source = df_source[pd.to_datetime(df_source.lastModifiedDate) < datetime.utcnow()]
@@ -671,8 +672,10 @@ class NetsuiteTestingClient(object):
             print("attributes_currency passed")
 
     def generate_credit_note_line_testing_report(self):
-        df_pubsub = pd.read_csv(os.path.join(get_csv_path('pubsub'), 'creditMemo_line.csv'))
-        df_source = pd.read_csv(os.path.join(get_csv_path(), 'credit_memo_line_' + str(self.batch_id) + '_raw.csv'))
+        df_pubsub = pd.read_csv(os.path.join(get_csv_path('pubsub'), ep.CREDIT_MEMO+'_line_' + str(self.batch_id) +
+                                             '.csv'))
+        df_source = pd.read_csv(os.path.join(get_csv_path(), ep.CREDIT_MEMO + '_line_' + str(self.batch_id) +
+                                             '_raw.csv'))
         df_source = df_source[pd.to_datetime(df_source.updated_at) < datetime.utcnow()]
 
         count_pubsub = df_pubsub.iloc[:, 0].size

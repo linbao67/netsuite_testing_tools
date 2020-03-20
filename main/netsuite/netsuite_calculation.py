@@ -417,7 +417,7 @@ class NetsuiteClient(object):
         df_creditMemo = pd.DataFrame(credit_memo)
         df_credit_memo_line = pd.DataFrame(credit_memo_lines)
         raw_csv_path = get_csv_path() + '/' + ep.CREDIT_MEMO + '_' + str(self.batch_id) + '_raw.csv'
-        line_csv_path = os.path.join(get_csv_path(), 'credit_memo_line' + '_' + str(self.batch_id) + '_raw.csv')
+        line_csv_path = os.path.join(get_csv_path(), ep.CREDIT_MEMO  + '_line_' + str(self.batch_id) + '_raw.csv')
 
         df_creditMemo.to_csv(raw_csv_path,
                              columns=['id', 'credit_note_number', 'amount', 'date', 'currency_internal_id',

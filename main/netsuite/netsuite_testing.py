@@ -400,7 +400,7 @@ class NetsuiteTestingClient(object):
             print("attributes_shipping_address_postcode passed")
 
     def generate_invoice_line_testing_report(self):
-        df_pubsub = pd.read_csv(os.path.join(get_csv_path('pubsub'), 'invoice_line.csv'))
+        df_pubsub = pd.read_csv(os.path.join(get_csv_path('pubsub'), 'invoice_line_' + str(self.batch_id) + '.csv'))
         df_source = pd.read_csv(os.path.join(get_csv_path(), 'invoice_line_' + str(self.batch_id) + '_raw.csv'))
         df_source = df_source[pd.to_datetime(df_source.updated_at) < datetime.utcnow()]
 
@@ -478,7 +478,7 @@ class NetsuiteTestingClient(object):
             print("attributes_total passed")
 
 
-        df_tmp = df_merge[(df_merge['attributes_quantity'] != df_merge['tgt_quantity'])][
+        df_tmp = df_merge[(df_merge['attributes_quantity'].round(2) != df_merge['tgt_quantity'].round(2))][
             ['relationships_invoice_number', 'attributes_description', 'attributes_quantity', 'tgt_quantity']]
 
         r = df_tmp.shape[0]
@@ -835,7 +835,7 @@ class color:
 
 if __name__ == '__main__':
     client = NetsuiteTestingClient()
-    client.generate_credit_memo_testing_report()
-    client.generate_credit_note_line_testing_report()
+    # client.generate_credit_memo_testing_report()
+    # client.generate_credit_note_line_testing_report()
     client.generate_invoice_line_testing_report()
-    client.generate_invoice_testing_report()
+    # client.generate_invoice_testing_report()

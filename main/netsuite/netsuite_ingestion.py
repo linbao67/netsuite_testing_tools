@@ -76,8 +76,12 @@ class NetsuiteClient(object):
         response_dict.pop('customFieldList', None)
         response_json = json.loads(json.dumps(response_dict))
 
+
+
         search_id, total_pages, records = self.get_sync_info(response_json, service)
-        save_to_json(records, endpoint, self.batch_id, page_index)
+
+        if records:
+            save_to_json(records, endpoint, self.batch_id, page_index)
 
         if page_index == 1:
             self.udpate_sync_info(endpoint, search_id, total_pages, '2')
@@ -123,10 +127,16 @@ class NetsuiteClient(object):
 
         response_field = ep.SERVICE_FIELD[service][ep.RESPONSE_FIELD]
         result_field = ep.SERVICE_FIELD[service][ep.RESULT_FIELD]
+        if response_json['Body'][response_field][result_field]['totalRecords'] == '0':
+            records = None
+        else:
+            records = response_json['Envelope']['Body'][response_field][result_field]['recordList']['record']
 
         return response_json['Envelope']['Body'][response_field][result_field]['searchId'], \
                int(response_json['Envelope']['Body'][response_field][result_field]['totalPages']), \
-               response_json['Envelope']['Body'][response_field][result_field]['recordList']['record']
+               records
+
+
 
     def regenerate_json_file(self, endpoint, batch_id, page_index):
 
@@ -159,7 +169,7 @@ class NetsuiteClient(object):
 
 if __name__ == '__main__':
     netsuite_client = NetsuiteClient()
-    if netsuite_client.batch_id == 0:
+    if netsuite_client.batch_id == 2:
         netsuite_client.generate_currency()
     result = True
     while result:

@@ -738,7 +738,7 @@ class NetsuiteClient(object):
                         amount = float(item_line.get('amount'))
                         print('quantity {} rate {} amount {}:'.format(quantity, rate, amount))
                         if quantity is not None:
-                            tgt_quantity = quantity
+                            tgt_quantity=quantity
                         elif rate is not None and rate[-1] != '%' and float(rate) != 0.0:
                             tgt_quantity = amount / float(rate)
                         else:
@@ -804,10 +804,12 @@ class NetsuiteClient(object):
                         itemDisp = time_line.get('itemDisp')
                         description = itemDisp
                         quantity = time_line.get('quantity')
+
                         rate = time_line.get('rate')
                         amount = float(time_line.get('amount'))
                         print('quantity {} rate {} amount {}:'.format(quantity, rate, amount))
-                        tgt_quantity = quantity
+                        pos = quantity.index(':')
+                        tgt_quantity = round(int(quantity[:pos]) + int(quantity[pos + 1:]) / 60, 1)
                         tgt_unit_price = rate
                         tgt_discount = 0
                         tgt_net_total = amount
@@ -870,18 +872,24 @@ class NetsuiteClient(object):
                             item_type = df_tmp['itemType'].values[0]
 
                             if item_type not in ['ItemGroup', 'DescriptionItem', 'SubtotalItem']:
+
+
                                 description = name
                                 quantity = float(
-                                    item_cost_line['quantity']) if 'quantity' in item_cost_line else None
+                                    item_cost_line['itemCostCount']) if 'itemCostCount' in item_cost_line else None
                                 cost = item_cost_line.get('cost')
                                 amount = float(item_cost_line.get('amount', 0))
                                 print('quantity {} rate {} amount {}:'.format(quantity, rate, amount))
                                 if quantity is not None:
                                     tgt_quantity = quantity
-                                elif rate is not None and cost[-1] != '%' and float(cost) != 0.0:
+                                elif cost is not None and cost[-1] != '%' and float(cost) != 0.0:
                                     tgt_quantity = amount / float(cost)
+                                    if tgt_quantity == -0:
+                                        tgt_quantity = 0
                                 else:
                                     tgt_quantity = 1
+
+
 
                                 if cost is not None and cost[-1] != '%' and float(cost) != 0.0:
                                     tgt_unit_price = cost
@@ -1394,4 +1402,4 @@ class NetsuiteClient(object):
 if __name__ == '__main__':
     testing = NetsuiteClient()
 
-    testing.convert_credit_memo_to_csv()
+    testing.convert_invoice_to_csv()

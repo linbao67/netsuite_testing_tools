@@ -80,13 +80,30 @@ class NetsuiteClient(object):
 
         search_id, total_pages, records = self.get_sync_info(response_json, service)
 
-        if records:
+        if total_pages != 0:
             save_to_json(records, endpoint, self.batch_id, page_index)
+            if page_index == 1:
+                self.udpate_sync_info(endpoint, search_id, total_pages, '2')
 
-        if page_index == 1:
-            self.udpate_sync_info(endpoint, search_id, total_pages, '2')
+            if page_index == int(total_pages):
+                endpoint_index = endpoint_index + 1
+                property_list = [{'config_type': 'parameters',
+                                  'name': 'ENDPOINT_INDEX',
+                                  'value': str(endpoint_index)},
+                                 {'config_type': endpoint,
+                                  'name': 'SEARCH_ID',
+                                  'value': search_id},
+                                 {'config_type': endpoint,
+                                  'name': 'TOTAL_PAGES',
+                                  'value': str(total_pages)},
+                                 {'config_type': endpoint,
+                                  'name': 'PAGE_INDEX',
+                                  'value': '1'}]
+                update_property_list(property_list)
 
-        if page_index == int(total_pages):
+            else:
+                set_property(endpoint, 'page_index', str(page_index + 1))
+        else:
             endpoint_index = endpoint_index + 1
             property_list = [{'config_type': 'parameters',
                               'name': 'ENDPOINT_INDEX',
@@ -96,8 +113,6 @@ class NetsuiteClient(object):
                               'value': '1'}]
             update_property_list(property_list)
 
-        else:
-            set_property(endpoint, 'page_index', str(page_index + 1))
 
         if endpoint_index == len(ep.ENDPOINTS):
             set_property('parameters', 'ENDPOINT_INDEX', '0')
@@ -127,7 +142,7 @@ class NetsuiteClient(object):
 
         response_field = ep.SERVICE_FIELD[service][ep.RESPONSE_FIELD]
         result_field = ep.SERVICE_FIELD[service][ep.RESULT_FIELD]
-        if response_json['Body'][response_field][result_field]['totalRecords'] == '0':
+        if response_json['Envelope']['Body'][response_field][result_field]['totalRecords'] == '0':
             records = None
         else:
             records = response_json['Envelope']['Body'][response_field][result_field]['recordList']['record']
@@ -169,8 +184,7 @@ class NetsuiteClient(object):
 
 if __name__ == '__main__':
     netsuite_client = NetsuiteClient()
-    if netsuite_client.batch_id == 2:
-        netsuite_client.generate_currency()
+    netsuite_client.generate_currency()
     result = True
     while result:
         result = netsuite_client.generate_xml()

@@ -34,6 +34,15 @@ class NetsuiteClient(object):
                                  data=soap_service_xml)
 
         save_to_file(response.text, endpoint, self.batch_id)
+        force_list = {'record'}
+        response_dict = xmltodict.parse(response.text, process_namespaces=True, namespaces=ep.ESCAPE_NAMESPACES,
+                                        attr_prefix='', cdata_key='', force_list=force_list)
+        response_dict.pop('customFieldList', None)
+        response_json = json.loads(json.dumps(response_dict))
+        response_field = ep.SERVICE_FIELD[service][ep.RESPONSE_FIELD]
+        result_field = ep.SERVICE_FIELD[service][ep.RESULT_FIELD]
+        records = response_json['Envelope']['Body'][response_field][result_field]['recordList']['record']
+        save_to_json(records, endpoint, self.batch_id, 1)
 
     def generate_xml(self):
         sync_start_time = get_property('parameters', 'sync_start_time')
@@ -70,12 +79,17 @@ class NetsuiteClient(object):
         print("Save xml file for endpoint {} with page index {}".format(endpoint, page_index))
         save_to_file(response.text, endpoint, self.batch_id, page_index)
 
-        force_list = {'record', 'item', 'customField', 'expCost', 'itemCost', 'time', 'giftCertRedemption', 'apply'}
+        force_list = {'record', 'item', 'customField', 'expCost', 'itemCost', 'time', 'giftCertRedemption'}
         response_dict = xmltodict.parse(response.text, process_namespaces=True, namespaces=ep.ESCAPE_NAMESPACES,
                                         attr_prefix='', cdata_key='', force_list=force_list)
         response_dict.pop('customFieldList', None)
         response_json = json.loads(json.dumps(response_dict))
-
+        response_field = ep.SERVICE_FIELD[service][ep.RESPONSE_FIELD]
+        result_field = ep.SERVICE_FIELD[service][ep.RESULT_FIELD]
+        if response_json['Envelope']['Body'][response_field][result_field]['totalRecords'] == '0':
+            records = None
+        else:
+            records = response_json['Envelope']['Body'][response_field][result_field]['recordList']['record']
 
 
         search_id, total_pages, records = self.get_sync_info(response_json, service)

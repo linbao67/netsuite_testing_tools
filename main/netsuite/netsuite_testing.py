@@ -16,7 +16,7 @@ class NetsuiteTestingClient(object):
         self.batch_id = get_property('parameters', 'BATCH_ID')
 
     def generate_invoice_testing_report(self):
-        df_pubsub = pd.read_csv(os.path.join(get_csv_path('pubsub'), ep.INVOICE + '.csv'))
+        df_pubsub = pd.read_csv(os.path.join(get_csv_path('pubsub'), ep.INVOICE + '_' + str(self.batch_id) + '.csv'))
         df_source = pd.read_csv(os.path.join(get_csv_path(), ep.INVOICE + '_' + str(self.batch_id) + '_raw.csv'))
         df_source = df_source[pd.to_datetime(df_source.updated_at) < datetime.utcnow()]
 
@@ -135,8 +135,8 @@ class NetsuiteTestingClient(object):
 
         df_tmp = df_merge[(
                 df_merge[
-                    'attributes_outstanding_total'].round(2) != df_merge['tgt_outstanding_total'].round(2))][
-                  'attributes_invoice_number']
+                    'attributes_outstanding_total'].round(2) != df_merge['tgt_outstanding_total'].round(2))][[
+                  'attributes_invoice_number','attributes_outstanding_total','tgt_outstanding_total']]
 
         r = df_tmp.shape[0]
         if r != 0:
@@ -399,6 +399,28 @@ class NetsuiteTestingClient(object):
         else:
             print("attributes_shipping_address_postcode passed")
 
+        df_tmp = df_merge[(df_merge['relationships_contact_name'].fillna(value='Unknown')
+                           != df_merge['tgt_contact'].fillna(value='Unknown'))]['attributes_invoice_number']
+        r = df_tmp.shape[0]
+        if r != 0:
+            print('attributes_contact failed' + color.RED)
+            print("Totally got {} invoices".format(df_tmp.shape[0]))
+            print(df_tmp.values)
+            print('\033[0m')
+        else:
+            print("attributes_shipping_address_postcode passed")
+
+        df_tmp = df_merge[(df_merge['relationships_contact_name'].fillna(value='Unknown')
+                           != df_merge['src_contact'].fillna(value='Unknown'))]['attributes_invoice_number']
+        r = df_tmp.shape[0]
+        if r != 0:
+            print('attributes_contact throw missing items failed' + color.RED)
+            print("Totally got {} invoices".format(df_tmp.shape[0]))
+            print(df_tmp.values)
+            print('\033[0m')
+        else:
+            print("attributes_shipping_address_postcode passed")
+
     def generate_invoice_line_testing_report(self):
         df_pubsub = pd.read_csv(os.path.join(get_csv_path('pubsub'), 'invoice_line_' + str(self.batch_id) + '.csv'))
         df_source = pd.read_csv(os.path.join(get_csv_path(), 'invoice_line_' + str(self.batch_id) + '_raw.csv'))
@@ -444,12 +466,6 @@ class NetsuiteTestingClient(object):
         df_merge = pd.merge(df_pubsub, df_source, how='inner', left_on=['relationships_invoice_number',
                                                                         'attributes_description'],
                             right_on=['invoice_number', 'tgt_description'])
-
-
-        print('net total failed'+color.RED)
-        print(df_merge[df_merge['attributes_net_total'].round(2) != df_merge['tgt_net_total'].round(2)]
-              [['relationships_invoice_number', 'attributes_description', 'attributes_net_total',
-                'tgt_net_total']].values)
 
         df_tmp = df_merge[df_merge['attributes_net_total'].round(2)
                           != df_merge['tgt_net_total'].round(2)][['relationships_invoice_number',
@@ -546,6 +562,20 @@ class NetsuiteTestingClient(object):
             print('\033[0m')
         else:
             print("attributes_tax_amount passed")
+
+        df_tmp = df_merge[(df_merge['relationships_item_reference'].fillna(value='Unknown') != df_merge[
+            'tgt_item_name'].fillna(
+            value='Unknown'))][['relationships_invoice_number', 'attributes_description', 'relationships_item_reference',
+                                'tgt_item_name']]
+
+        r = df_tmp.shape[0]
+        if r != 0:
+            print(color.BOLD + color.RED + 'relationships_item_reference failed:')
+            print("Totally got {} invoice lines".format(df_tmp.shape[0]))
+            print(df_tmp.values)
+            print('\033[0m')
+        else:
+            print("relationships_item_reference passed")
 
     def generate_credit_memo_testing_report(self):
         df_pubsub = pd.read_csv(os.path.join(get_csv_path('pubsub'),ep.CREDIT_MEMO + '_' + str(self.batch_id) +
@@ -835,7 +865,7 @@ class color:
 
 if __name__ == '__main__':
     client = NetsuiteTestingClient()
-    # client.generate_credit_memo_testing_report()
-    # client.generate_credit_note_line_testing_report()
-    client.generate_invoice_line_testing_report()
-    # client.generate_invoice_testing_report()
+    #client.generate_credit_memo_testing_report()
+    #client.generate_credit_note_line_testing_report()
+    #client.generate_invoice_line_testing_report()
+    client.generate_invoice_testing_report()

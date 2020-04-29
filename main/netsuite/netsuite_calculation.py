@@ -21,6 +21,9 @@ class NetsuiteClient(object):
     def __init__(self):
         self.batch_id = get_property('parameters', 'BATCH_ID')
 
+    def __cal_subtotal__(self, ):
+        pass
+
     def convert_currency_to_csv(self):
         json_string = read_json_file(ep.CURRENCY, self.batch_id)
         items = json.loads(json_string)
@@ -169,6 +172,8 @@ class NetsuiteClient(object):
             updated_at = record.get('lastModifiedDate')
             updated_at = getUTCDateTime(updated_at) if updated_at else None
 
+            invoice_tax_rate = float(record.get('taxRate', 0))
+
             credit_memo.append(dict(id=credit_memo_id,
                                     credit_note_number=credit_note_number,
                                     amount=amount,
@@ -234,206 +239,444 @@ class NetsuiteClient(object):
                                               updated_at=updated_at
                                               ))
 
-            if 'itemList' in record:
-                item_lines = record['itemList']['item']
-                cal_sub_total = 0.0
+            item_lines = record['itemList']['item']
+            cal_sub_total = 0.0
 
-                for line in item_lines:
-                    if 'item' in line:
-                        item_id = line['item'][0].get('internalId')
+            item_list_discount_apply_to = {}
+            item_list_markup_apply_to = {}
 
-                        if item_id != '0':
-                            item_type = df_item[df_item['internalId'] == int(item_id)]['itemType'].values[0]
+            previous_subtotal_item_out_grp = 0
+            previous_subtotal_item_in_grp = -1
 
-                            if item_type not in ['ItemGroup', 'DescriptionItem', 'SubtotalItem', 'PaymentItem']:
-                                cal_sub_total = cal_sub_total + float(line.get('amount'))
-                                print("Item Id:{} with type:{} subtotal:{}".format(item_id, item_type, cal_sub_total))
+            flag_inside_itemgroup = False
+            flag_discountable_inc_markup = False
+            flag_discountable_exc_markup = False
+
+            flag_discountable_in_grp_inc_markup = False
+            flag_discountable_in_grp_exc_markup = False
+
+            count_item_list = 0
+
+            previous_item_type = None
+            last_discountable_item = None
+            last_markupable_item = None
+            item_list_published_discounts = []
+            item_list_unknown_markup = []
+            item_list_discount = []
+            item_list_markup = []
+            df_raw_invoice_line = pd.DataFrame.from_dict(item_lines)
+            print(df_raw_invoice_line['item'])
+            item_name_list = {}
+            for line in item_lines:
+
+                count_item_list = count_item_list + 1
+
+                line_amount = float(line.get('amount')) if 'amount' in line else None
+
+                if 'item' in line:
+                    item_id = line['item'][0].get('internalId')
+                    name = line['item'][0].get('name')
+
+                    if item_id != '0':
+                        item_type = df_item[df_item['internalId'] == int(item_id)]['itemType'].values[0]
+
+                        print("items line no: {} item type {} amount {}".format(count_item_list, item_type,
+                                                                                line_amount))
+
+                        if item_type not in ['ItemGroup', 'DescriptionItem', 'SubtotalItem']:
+                            item_name_list[count_item_list] = name
+                            cal_sub_total = cal_sub_total + float(line.get('amount'))
+
+                        if item_type == 'DiscountItem':
+
+                            if 'tax1amt' in line:
+                                tax1amt = float(line['tax1amt'])
+                                if tax1amt == 0.0:
+                                    tmp_tax_rate = 0
+                                else:
+                                    tmp_tax_rate = tax1amt / line_amount * 100
+                            elif 'tax_rate_1' in line:
+                                tax_rate_1 = line.get('tax_rate_1')
+                                tmp_tax_rate = tax_rate_1
+                            else:
+                                tmp_tax_rate = 0
+
+                            if last_discountable_item:
+                                if 'rate' in line and line['rate'][-1] == '%':
+                                    tmp_discount_rate = float(line['rate'][:-1]) * 0.01
+                                elif line_amount != 0.0:
+                                    tmp_discount_rate = line_amount / last_discountable_item['amount']
+
+                                else:
+                                    tmp_discount_rate = 0
+                                discount_item = last_discountable_item
+                                discount_item['discount_rate'] = tmp_discount_rate
+                                discount_item['tax_rate'] = tmp_tax_rate
+                                # only in this case, discount may apply to other discounts,
+                                item_list_discount.append(count_item_list)
+                                item_list_discount_apply_to[count_item_list] = discount_item
+
+                            else:
+                                item_list_published_discounts.append(count_item_list)
+
+
+                        elif item_type == 'SubtotalItem':
+                            end_subtotal_item = count_item_list - 1
+                            if previous_item_type == 'SubtotalItem' or previous_item_type == 'ItemGroup':
+                                last_discountable_item = None
+                            elif end_subtotal_item != 0:
+                                # if there is only description item, empty item group
+                                if flag_inside_itemgroup:
+                                    if flag_discountable_in_grp_inc_markup:
+                                        pos_subtotal_items = {'start': previous_subtotal_item_in_grp + 1,
+                                                              'end': end_subtotal_item,
+                                                              'amount': line_amount}
+                                        last_discountable_item = pos_subtotal_items
+                                    else:
+                                        last_discountable_item = None
+                                    previous_subtotal_item_in_grp = count_item_list
+                                else:
+                                    if flag_discountable_inc_markup:
+                                        pos_subtotal_items = {'start': previous_subtotal_item_out_grp + 1,
+                                                              'end': end_subtotal_item,
+                                                              'amount': line_amount}
+                                        last_discountable_item = pos_subtotal_items
+                                    else:
+                                        last_discountable_item = None
+                                    previous_subtotal_item_out_grp = count_item_list
+                            if line_amount == 0.0:
+                                print("subtotal with 0 :")
+                                last_discountable_item = None
+
+                            last_markupable_item = last_discountable_item
+
+                            if flag_inside_itemgroup:
+                                flag_discountable_in_grp_exc_markup = True
+                                flag_discountable_in_grp_inc_markup = True
+                            else:
+                                flag_discountable_inc_markup = True
+                                flag_discountable_exc_markup = True
+                        elif item_type == 'ItemGroup':
+                            flag_inside_itemgroup = True
+                            previous_subtotal_item_in_grp = count_item_list
+                            flag_discountable_inc_markup = True
+                            flag_discountable_exc_markup = True
+                            flag_discountable_in_grp_inc_markup = False
+                            flag_discountable_in_grp_exc_markup = False
+                            start_group_item = count_item_list + 1
+                            last_discountable_item = None
+                            last_markupable_item = last_discountable_item
+                        elif item_type == 'MarkupItem':
+                            if flag_inside_itemgroup:
+                                flag_discountable_in_grp_inc_markup = True  # discountable item already set to True
+                                # due to item group
+                            else:
+                                flag_discountable_inc_markup = True
+                            if not flag_discountable_exc_markup or not flag_discountable_in_grp_exc_markup:
+                                if line_amount != 0.0:
+                                    last_discountable_item = {'start': count_item_list, 'end': count_item_list,
+                                                              'amount': line_amount}
+                                else:
+                                    last_discountable_item = None
+
+                            if last_markupable_item:
+                                item_list_markup_apply_to[count_item_list] = last_markupable_item
+
+                                item_list_markup.append(count_item_list)
+                            else:
+                                item_list_unknown_markup.append(count_item_list)
+                                item_name_list[count_item_list] = 'Markup on-unknown item'
+
+                        elif item_type == 'DescriptionItem':
+                            # if not flag_discountable_inc_markup:
+                            #     start_subtotal_item = start_subtotal_item + 1
+                            # if flag_inside_itemgroup and (not flag_discountable_in_grp_inc_markup):
+                            #     start_group_item = start_group_item + 1
+                            # don't need to calculate the exact start item, those items will not be published or
+                            # discountable item ( put off the calculation to next loop )
+                            pass
+
+                        else:
+                            if flag_inside_itemgroup:
+                                # already inside item group, no need to set the flag of discoutable item
+                                flag_discountable_in_grp_exc_markup = True
+                                flag_discountable_in_grp_inc_markup = True
+                            else:
+                                flag_discountable_inc_markup = True
+                                flag_discountable_exc_markup = True
+
+                            last_discountable_item = {'start': count_item_list, 'end': count_item_list,
+                                                      'amount': line_amount}
+                        previous_item_type = item_type
+                        last_markupable_item = last_discountable_item
                     else:
-                        # in case there is no item name for the line
-                        cal_sub_total = cal_sub_total + float(line.get('amount'))
+                        end_group_item = count_item_list - 1
+                        if end_group_item < start_group_item:
+                            # group has no items
+                            pos_group_items = None
+                        else:
+                            pos_group_items = {'start': start_group_item, 'end': end_group_item,
+                                               'amount': line_amount}
+                        previous_item_type = 'ItemGroupEnd'
+                        last_discountable_item = pos_group_items
+                        last_markupable_item = last_discountable_item
+                        flag_inside_itemgroup = False
+                else:
+                    item_name_list[count_item_list] = ''
+                    # in case there is no item name for the line
+                    cal_sub_total = cal_sub_total + float(line.get('amount'))
 
-                for item_line in item_lines:
-                    print(item_line)
+                    last_discountable_item = {'start': count_item_list, 'end': count_item_list, 'amount':
+                        line_amount}
+                    previous_item_type = 'InventoryItem'
+                    last_markupable_item = last_discountable_item
 
-                    if 'item' in item_line:
-                        item_id = item_line['item'][0].get('internalId')
-                        name = item_line['item'][0].get('name')
-                        print(df_item[df_item['internalId'] == int(item_id)])
-                        if item_id != '0':
-                            df_tmp = df_item[df_item['internalId'] == int(item_id)]
-                            item_type = df_tmp['itemType'].values[0]
-                            item_name = df_tmp['reference'].values[0]
+                    if flag_inside_itemgroup:
+                        # already inside item group, no need to set the flag of discoutable item
+                        flag_discountable_in_grp_exc_markup = True
+                        flag_discountable_in_grp_inc_markup = True
+                    else:
+                        flag_discountable_inc_markup = True
+                        flag_discountable_exc_markup = True
 
-                            if item_type not in ['ItemGroup', 'DescriptionItem', 'SubtotalItem']:
-                                description = name
-                                quantity = float(item_line['quantity']) if 'quantity' in item_line else None
-                                rate = item_line.get('rate')
-                                amount = float(item_line.get('amount'))
-                                print('quantity {} rate {} amount {}:'.format(quantity, rate, amount))
-                                if quantity is not None:
-                                    tgt_quantity = quantity
-                                elif rate is not None and rate[-1] != '%' and float(rate) != 0.0:
-                                    tgt_quantity = amount / float(rate)
+                if discount_rate is not None and discount_rate[-1] == '%':
+                    cal_discount_rate = 1 - -1 * float(discount_rate[:-1]) * 0.01
+                elif discount_rate is not None and cal_sub_total != 0.0:
+                    cal_discount_rate = 1 - -1 * discountTotal / cal_sub_total
+                else:
+                    cal_discount_rate = 1
+
+                print("credit_note_number {} published discount {}".format(credit_note_number, str(item_list_published_discounts)))
+                item_list_discount_rate = {}
+                item_list_tax_rate = {}
+                print("credit_note_number {} dicount apply to {}".format(credit_note_number, str(item_list_discount_apply_to)))
+
+                item_list_discount.reverse()
+                item_list_discount_to_discount = {}
+
+
+                print(item_list_discount)
+                for discount in item_list_discount:
+                    tmp_discount_rate = item_list_discount_apply_to[discount][
+                                        'discount_rate'] * item_list_discount_to_discount.get(discount, 1)
+                    start = item_list_discount_apply_to[discount]['start']
+                    end = item_list_discount_apply_to[discount]['end'] + 1
+                    for i in range(start, end):
+                        if i in item_list_discount:
+                            item_list_discount_to_discount[i] = item_list_discount_to_discount.get(i, 1) + \
+                                                                tmp_discount_rate
+                print(item_list_discount_to_discount)
+
+                for line_no, discount in item_list_discount_apply_to.items():
+
+                    cal_line_discount_rate = discount['discount_rate'] * item_list_discount_to_discount.get(line_no, 1)
+                    cal_line_tax_rate = discount['tax_rate']  # already times 0.01
+                    start = discount['start']
+                    end = discount['end'] + 1
+
+                    for i in range(start, end):
+                        if i in item_list_discount_rate:
+                            item_list_discount_rate[i] = item_list_discount_rate[i] + cal_line_discount_rate
+                            item_list_tax_rate[i] = item_list_tax_rate[i] + cal_line_tax_rate * cal_line_discount_rate
+                        else:
+                            item_list_discount_rate[i] = cal_line_discount_rate
+                            item_list_tax_rate[i] = cal_line_tax_rate
+                print("credit_note_number {} discount rate {}".format(credit_note_number, str(item_list_discount_rate)))
+                print("credit_note_number {} tax rate {}".format(credit_note_number, str(item_list_tax_rate)))
+
+            count_item_list = 0
+            for item_line in item_lines:
+                count_item_list += 1
+                if 'item' in item_line:
+                    item_id = item_line['item'][0].get('internalId')
+                    name = item_line['item'][0].get('name')
+                    print(df_item[df_item['internalId'] == int(item_id)])
+                    if item_id != '0':
+                        df_tmp = df_item[df_item['internalId'] == int(item_id)]
+                        item_type = df_tmp['itemType'].values[0]
+                        item_name = df_tmp['reference'].values[0]
+
+                        if item_type not in ['ItemGroup', 'DescriptionItem', 'SubtotalItem', 'DiscountItem'] or \
+                                item_type == 'DiscountItem' and count_item_list in item_list_published_discounts:
+                            description = name
+                            quantity = float(item_line['quantity']) if 'quantity' in item_line else None
+                            rate = item_line.get('rate')
+                            amount = float(item_line.get('amount'))
+                            print('quantity {} rate {} amount {}:'.format(quantity, rate, amount))
+                            if quantity is not None:
+                                tgt_quantity = quantity
+                            elif rate is not None and rate[-1] != '%' and float(rate) != 0.0:
+                                tgt_quantity = amount / float(rate)
+                            else:
+                                tgt_quantity = 1
+
+                            if item_type == 'DiscountItem':
+                                tgt_unit_price = 0
+                            elif rate is not None and rate[-1] != '%' and float(rate) != 0.0:
+                                tgt_unit_price = rate
+                            elif quantity is not None:
+                                tgt_unit_price = amount / quantity
+                            else:
+                                tgt_unit_price = amount
+
+                            if item_type == 'DiscountItem':
+                                tgt_discount = -1 * amount * item_list_discount_to_discount.get(count_item_list,1)
+                            else:
+                                tgt_discount = -1 * amount * item_list_discount_rate.get(count_item_list, 0)
+
+                            if item_type == 'DiscountItem':
+                                tgt_net_total = 0
+                            else:
+                                tgt_net_total = amount
+
+                            if 'taxCode' in item_line:
+                                tax_code = item_line['taxCode'].get('name')
+                            else:
+                                tax_code = None
+                                print('Credit Memo {} Item {} doesnt have tax_code'.format(credit_note_number,
+                                                                                           item_id))
+                            if 'isTaxable' in item_line:
+                                if item_line['isTaxable'].upper() == 'TRUE':
+                                    tax_rate_1 = invoice_tax_rate
                                 else:
-                                    tgt_quantity = 1
+                                    tax_rate_1 = 0
+                            elif 'tax1Amt' in item_line:
+                                tax1_amt = float(item_line['tax1Amt'])
+                                tax_rate_1 = tax1_amt / amount * 100 if tax1_amt != 0.0 and amount != 0.0 else 0
 
-                                if item_type == 'DiscountItem':
-                                    tgt_unit_price = 0
-                                elif rate is not None and rate[-1] != '%' and float(rate) != 0.0:
-                                    tgt_unit_price = rate
-                                elif quantity is not None:
-                                    tgt_unit_price = amount / quantity
-                                else:
-                                    tgt_unit_price = amount
-
-                                if item_type == 'DiscountItem':
-                                    tgt_discount = -1 * amount
-                                else:
-                                    tgt_discount = 0
-
-                                if item_type == 'DiscountItem':
-                                    tgt_net_total = 0
-                                else:
-                                    tgt_net_total = amount
-
-                                if 'taxCode' in item_line:
-                                    tax_code = item_line['taxCode'].get('name')
-                                else:
-                                    tax_code = None
-                                    print('Credit Memo {} Item {} doesnt have tax_code'.format(credit_note_number,
-                                                                                               item_id))
+                            else:
                                 tax_rate_1 = float(item_line.get('taxRate1', 0))
 
-                                if discount_rate is not None and discount_rate[-1] == '%':
-                                    cal_discount_rate = 1 - -1 * float(discount_rate[:-1]) * 0.01
-                                elif discount_rate is not None and cal_sub_total != 0.0:
-                                    cal_discount_rate = 1 - -1 * discountTotal / cal_sub_total
-                                else:
-                                    cal_discount_rate = 1
+                            if item_type == 'DiscountItem':
+                                tax_rate_1 = tax_rate_1 * item_list_discount_to_discount.get(count_item_list, 1)
+                            else:
+                                tax_rate_1 = tax_rate_1 + item_list_tax_rate.get(count_item_list, 0)
 
-                                if str(is_pre_tax).upper() == 'TRUE':
-                                    print('isPreTax {} is True'.format(is_pre_tax))
-                                    tgt_tax_amount = amount * cal_discount_rate * tax_rate_1 * 0.01
-                                else:
-                                    tgt_tax_amount = amount * tax_rate_1 * 0.01
 
-                                tgt_total = tgt_net_total + tgt_tax_amount - tgt_discount
-                                credit_memo_lines.append(dict(credit_memo_id=credit_memo_id,
-                                                              credit_note_number=credit_note_number,
-                                                              src_internalId=item_id,
-                                                              src_discountItem_internalId=None,
-                                                              src_shipMethod_internalId=None,
-                                                              tgt_internalId=item_id,
-                                                              src_name=name,
-                                                              src_discountItem_name=None,
-                                                              src_shipMethod_name=None,
-                                                              tgt_description=description,
-                                                              src_isPreTax=is_pre_tax,
-                                                              cal_item_type=item_type,
-                                                              src_quantity=quantity,
-                                                              src_amount=amount,
-                                                              src_rate=rate,
-                                                              tgt_quantity=tgt_quantity,
-                                                              tgt_discount=tgt_discount,
-                                                              src_discountTotal=None,
-                                                              src_shippingCost=None,
-                                                              src_handlingCost=None,
-                                                              tgt_total=tgt_total,
-                                                              tgt_unit_price=tgt_unit_price,
-                                                              tgt_net_total=tgt_net_total,
-                                                              src_taxCode=tax_code,
-                                                              src_shippingTaxCode=None,
-                                                              src_handlingTaxCode=None,
-                                                              tgt_tax_code=tax_code,
-                                                              src_taxRate1=tax_rate_1,
-                                                              src_shippingTax1Rate=None,
-                                                              src_handlingTax1Rate=None,
-                                                              src_discountRate=discount_rate,
-                                                              cal_sub_total=cal_sub_total,
-                                                              cal_discount_rate=cal_discount_rate,
-                                                              tgt_tax_amount=tgt_tax_amount,
-                                                              updated_at=updated_at))
+
+                            if str(is_pre_tax).upper() == 'TRUE':
+                                print('isPreTax {} is True'.format(is_pre_tax))
+                                tgt_tax_amount = amount * cal_discount_rate * tax_rate_1 * 0.01
+                            else:
+                                tgt_tax_amount = amount * tax_rate_1 * 0.01
+
+                            tgt_total = tgt_net_total + tgt_tax_amount - tgt_discount
+                            credit_memo_lines.append(dict(credit_memo_id=credit_memo_id,
+                                                          credit_note_number=credit_note_number,
+                                                          src_internalId=item_id,
+                                                          src_discountItem_internalId=None,
+                                                          src_shipMethod_internalId=None,
+                                                          tgt_internalId=item_id,
+                                                          src_name=name,
+                                                          src_discountItem_name=None,
+                                                          src_shipMethod_name=None,
+                                                          tgt_description=description,
+                                                          src_isPreTax=is_pre_tax,
+                                                          cal_item_type=item_type,
+                                                          src_quantity=quantity,
+                                                          src_amount=amount,
+                                                          src_rate=rate,
+                                                          tgt_quantity=tgt_quantity,
+                                                          tgt_discount=tgt_discount,
+                                                          src_discountTotal=None,
+                                                          src_shippingCost=None,
+                                                          src_handlingCost=None,
+                                                          tgt_total=tgt_total,
+                                                          tgt_unit_price=tgt_unit_price,
+                                                          tgt_net_total=tgt_net_total,
+                                                          src_taxCode=tax_code,
+                                                          src_shippingTaxCode=None,
+                                                          src_handlingTaxCode=None,
+                                                          tgt_tax_code=tax_code,
+                                                          src_taxRate1=tax_rate_1,
+                                                          src_shippingTax1Rate=None,
+                                                          src_handlingTax1Rate=None,
+                                                          src_discountRate=discount_rate,
+                                                          cal_sub_total=cal_sub_total,
+                                                          cal_discount_rate=cal_discount_rate,
+                                                          tgt_tax_amount=tgt_tax_amount,
+                                                          updated_at=updated_at))
+                else:
+
+                    quantity = float(item_line['quantity']) if 'quantity' in item_line else None
+                    rate = item_line.get('rate')
+                    amount = float(item_line.get('amount'))
+                    print('quantity {} rate {} amount {}:'.format(quantity, rate, amount))
+                    if quantity is not None:
+                        tgt_quantity = quantity
+                    elif rate is not None and rate[-1] != '%' and float(rate) != 0.0:
+                        tgt_quantity = amount / float(rate)
                     else:
+                        tgt_quantity = 1
 
-                        quantity = float(item_line['quantity']) if 'quantity' in item_line else None
-                        rate = item_line.get('rate')
-                        amount = float(item_line.get('amount'))
-                        print('quantity {} rate {} amount {}:'.format(quantity, rate, amount))
-                        if quantity is not None:
-                            tgt_quantity = quantity
-                        elif rate is not None and rate[-1] != '%' and float(rate) != 0.0:
-                            tgt_quantity = amount / float(rate)
-                        else:
-                            tgt_quantity = 1
+                    if rate is not None and rate[-1] != '%' and float(rate) != 0.0:
+                        tgt_unit_price = rate
+                    elif quantity is not None:
+                        tgt_unit_price = amount / quantity
+                    else:
+                        tgt_unit_price = amount
 
-                        if rate is not None and rate[-1] != '%' and float(rate) != 0.0:
-                            tgt_unit_price = rate
-                        elif quantity is not None:
-                            tgt_unit_price = amount / quantity
-                        else:
-                            tgt_unit_price = amount
+                    tgt_discount = 0
 
-                        tgt_discount = 0
+                    tgt_net_total = amount
 
-                        tgt_net_total = amount
+                    if 'taxCode' in item_line:
+                        tax_code = item_line['taxCode'].get('name')
+                    else:
+                        tax_code = None
+                        print('Credit Memo {} Item {} doesnt have tax_code'.format(credit_note_number,
+                                                                                   item_id))
+                    tax_rate_1 = float(item_line.get('taxRate1', 0))
 
-                        if 'taxCode' in item_line:
-                            tax_code = item_line['taxCode'].get('name')
-                        else:
-                            tax_code = None
-                            print('Credit Memo {} Item {} doesnt have tax_code'.format(credit_note_number,
-                                                                                       item_id))
-                        tax_rate_1 = float(item_line.get('taxRate1', 0))
+                    # if discount_rate is not None and discount_rate[-1] == '%':
+                    #     cal_discount_rate = 1 - -1 * float(discount_rate[:-1]) * 0.01
+                    # elif discount_rate is not None and cal_sub_total != 0.0:
+                    #     cal_discount_rate = 1 - -1 * discountTotal / cal_sub_total
+                    # else:
+                    #     cal_discount_rate = 1
 
-                        if discount_rate is not None and discount_rate[-1] == '%':
-                            cal_discount_rate = 1 - -1 * float(discount_rate[:-1]) * 0.01
-                        elif discount_rate is not None and cal_sub_total != 0.0:
-                            cal_discount_rate = 1 - -1 * discountTotal / cal_sub_total
-                        else:
-                            cal_discount_rate = 1
+                    if str(is_pre_tax).upper() == 'TRUE':
+                        print('isPreTax {} is True'.format(is_pre_tax))
+                        tgt_tax_amount = amount * cal_discount_rate * tax_rate_1 * 0.01
+                    else:
+                        tgt_tax_amount = amount * tax_rate_1 * 0.01
 
-                        if str(is_pre_tax).upper() == 'TRUE':
-                            print('isPreTax {} is True'.format(is_pre_tax))
-                            tgt_tax_amount = amount * cal_discount_rate * tax_rate_1 * 0.01
-                        else:
-                            tgt_tax_amount = amount * tax_rate_1 * 0.01
-
-                        tgt_total = tgt_net_total + tgt_tax_amount - tgt_discount
-                        credit_memo_lines.append(dict(credit_memo_id=credit_memo_id,
-                                                      credit_note_number=credit_note_number,
-                                                      src_internalId=None,
-                                                      src_discountItem_internalId=None,
-                                                      src_shipMethod_internalId=None,
-                                                      tgt_internalId=None,
-                                                      src_name=None,
-                                                      src_discountItem_name=None,
-                                                      src_shipMethod_name=None,
-                                                      tgt_description=None,
-                                                      src_isPreTax=is_pre_tax,
-                                                      cal_item_type=None,
-                                                      src_quantity=quantity,
-                                                      src_amount=amount,
-                                                      src_rate=rate,
-                                                      tgt_quantity=tgt_quantity,
-                                                      tgt_discount=tgt_discount,
-                                                      src_discountTotal=None,
-                                                      src_shippingCost=None,
-                                                      src_handlingCost=None,
-                                                      tgt_total=tgt_total,
-                                                      tgt_unit_price=tgt_unit_price,
-                                                      tgt_net_total=tgt_net_total,
-                                                      src_taxCode=tax_code,
-                                                      src_shippingTaxCode=None,
-                                                      src_handlingTaxCode=None,
-                                                      tgt_tax_code=tax_code,
-                                                      src_taxRate1=tax_rate_1,
-                                                      src_shippingTax1Rate=None,
-                                                      src_handlingTax1Rate=None,
-                                                      src_discountRate=discount_rate,
-                                                      cal_sub_total=cal_sub_total,
-                                                      cal_discount_rate=cal_discount_rate,
-                                                      tgt_tax_amount=tgt_tax_amount,
-                                                      updated_at=updated_at))
+                    tgt_total = tgt_net_total + tgt_tax_amount - tgt_discount
+                    credit_memo_lines.append(dict(credit_memo_id=credit_memo_id,
+                                                  credit_note_number=credit_note_number,
+                                                  src_internalId=None,
+                                                  src_discountItem_internalId=None,
+                                                  src_shipMethod_internalId=None,
+                                                  tgt_internalId=None,
+                                                  src_name=None,
+                                                  src_discountItem_name=None,
+                                                  src_shipMethod_name=None,
+                                                  tgt_description=None,
+                                                  src_isPreTax=is_pre_tax,
+                                                  cal_item_type=None,
+                                                  src_quantity=quantity,
+                                                  src_amount=amount,
+                                                  src_rate=rate,
+                                                  tgt_quantity=tgt_quantity,
+                                                  tgt_discount=tgt_discount,
+                                                  src_discountTotal=None,
+                                                  src_shippingCost=None,
+                                                  src_handlingCost=None,
+                                                  tgt_total=tgt_total,
+                                                  tgt_unit_price=tgt_unit_price,
+                                                  tgt_net_total=tgt_net_total,
+                                                  src_taxCode=tax_code,
+                                                  src_shippingTaxCode=None,
+                                                  src_handlingTaxCode=None,
+                                                  tgt_tax_code=tax_code,
+                                                  src_taxRate1=tax_rate_1,
+                                                  src_shippingTax1Rate=None,
+                                                  src_handlingTax1Rate=None,
+                                                  src_discountRate=discount_rate,
+                                                  cal_sub_total=cal_sub_total,
+                                                  cal_discount_rate=cal_discount_rate,
+                                                  tgt_tax_amount=tgt_tax_amount,
+                                                  updated_at=updated_at))
 
             if 'shippingCost' in record:
                 ship_method = record['shipMethod']
@@ -494,7 +737,7 @@ class NetsuiteClient(object):
             if 'handlingCost' in record:
                 description = 'handling cost'
                 handling_cost = float(record.get('handlingCost'))
-                handling_tax_code = record['handlingTaxCode']['name'] if 'handling_tax_code' in record else None
+                handling_tax_code = record['handlingTaxCode']['name'] if 'handlingTaxCode' in record else None
                 handling_tax_rate = record.get('handlingTax1Rate')
                 tgt_quantity = 1
                 tgt_unit_price = handling_cost
@@ -637,7 +880,9 @@ class NetsuiteClient(object):
         records = self.read_json_files(ep.INVOICE, self.batch_id)
         invoice = []
         invoice_lines = []
+
         for record in records:
+
             invoice_id = record.get('internalId', '')
             invoice_number = record.get('tranId', 'sales_invoice' + str(invoice_id))
             print('Invoice internal id:{}  number: {}'.format(invoice_id, invoice_number))
@@ -747,32 +992,290 @@ class NetsuiteClient(object):
                 item_lines = record['itemList']['item']
                 cal_sub_total = 0.0
 
+                item_list_discount_apply_to = {}
+                item_list_markup_apply_to = {}
+
+                previous_subtotal_item_out_grp = 0
+                previous_subtotal_item_in_grp = -1
+
+                flag_inside_itemgroup = False
+                flag_discountable_inc_markup = False
+                flag_discountable_exc_markup = False
+
+                flag_discountable_in_grp_inc_markup = False
+                flag_discountable_in_grp_exc_markup = False
+
+                count_item_list = 0
+
+                previous_item_type = None
+                last_discountable_item = None
+                last_markupable_item = None
+                item_list_published_discounts = []
+                item_list_unknown_markup = []
+                item_list_discount = []
+                item_list_markup = []
+                df_raw_invoice_line = pd.DataFrame.from_dict(item_lines)
+                print(df_raw_invoice_line['item'])
+                item_name_list = {}
                 for line in item_lines:
+
+                    count_item_list = count_item_list + 1
+
+                    line_amount = float(line.get('amount')) if 'amount' in line else None
+
                     if 'item' in line:
                         item_id = line['item'][0].get('internalId')
+                        name = line['item'][0].get('name')
+
                         if item_id != '0':
                             item_type = df_item[df_item['internalId'] == int(item_id)]['itemType'].values[0]
 
+                            print("items line no: {} item type {} amount {}".format(count_item_list, item_type,
+                                                                                    line_amount))
+
                             if item_type not in ['ItemGroup', 'DescriptionItem', 'SubtotalItem']:
+                                item_name_list[count_item_list] = name
                                 if item_type == 'PaymentItem':
                                     src_invoice_sub_total = src_invoice_sub_total - float(line.get('amount'))
                                 else:
                                     cal_sub_total = cal_sub_total + float(line.get('amount'))
+
+                            if item_type == 'DiscountItem':
+
+                                if 'tax1amt' in line:
+                                    tax1amt = float(line['tax1amt'])
+                                    if tax1amt == 0.0:
+                                        tmp_tax_rate = 0
+                                    else:
+                                        tmp_tax_rate = tax1amt / line_amount * 100
+                                elif 'tax_rate_1' in line:
+                                    tax_rate_1 = line.get('tax_rate_1')
+                                    tmp_tax_rate = tax_rate_1
+                                else:
+                                    tmp_tax_rate = 0
+
+                                if last_discountable_item:
+                                    if 'rate' in line and line['rate'][-1] == '%':
+                                        tmp_discount_rate = float(line['rate'][:-1])* 0.01
+                                    elif line_amount != 0.0:
+                                        tmp_discount_rate = line_amount / last_discountable_item['amount']
+
+                                    else:
+                                        tmp_discount_rate = 0
+                                    discount_item = last_discountable_item
+                                    discount_item['discount_rate'] = tmp_discount_rate
+                                    discount_item['tax_rate'] = tmp_tax_rate
+                                    # only in this case, discount may apply to other discounts,
+                                    item_list_discount.append(count_item_list)
+                                    item_list_discount_apply_to[count_item_list] = discount_item
+
+                                else:
+                                    item_list_published_discounts.append(count_item_list)
+
+
+                            elif item_type == 'SubtotalItem':
+                                end_subtotal_item = count_item_list - 1
+                                if previous_item_type == 'SubtotalItem' or previous_item_type == 'ItemGroup':
+                                    last_discountable_item = None
+                                elif end_subtotal_item != 0:
+                                    # if there is only description item, empty item group
+                                    if flag_inside_itemgroup:
+                                        if flag_discountable_in_grp_inc_markup:
+                                            pos_subtotal_items = {'start': previous_subtotal_item_in_grp + 1,
+                                                                  'end': end_subtotal_item,
+                                                                  'amount': line_amount}
+                                            last_discountable_item = pos_subtotal_items
+                                        else:
+                                            last_discountable_item = None
+                                        previous_subtotal_item_in_grp = count_item_list
+                                    else:
+                                        if flag_discountable_inc_markup:
+                                            pos_subtotal_items = {'start': previous_subtotal_item_out_grp + 1,
+                                                                  'end': end_subtotal_item,
+                                                                  'amount': line_amount}
+                                            last_discountable_item = pos_subtotal_items
+                                        else:
+                                            last_discountable_item = None
+                                        previous_subtotal_item_out_grp = count_item_list
+                                if line_amount == 0.0:
+                                    print("subtotal with 0 :")
+                                    last_discountable_item = None
+
+                                last_markupable_item = last_discountable_item
+
+                                if flag_inside_itemgroup:
+                                    flag_discountable_in_grp_exc_markup = True
+                                    flag_discountable_in_grp_inc_markup = True
+                                else:
+                                    flag_discountable_inc_markup = True
+                                    flag_discountable_exc_markup = True
+                            elif item_type == 'ItemGroup':
+                                flag_inside_itemgroup = True
+                                previous_subtotal_item_in_grp = count_item_list
+                                flag_discountable_inc_markup = True
+                                flag_discountable_exc_markup = True
+                                flag_discountable_in_grp_inc_markup = False
+                                flag_discountable_in_grp_exc_markup = False
+                                start_group_item = count_item_list + 1
+                                last_discountable_item = None
+                                last_markupable_item = last_discountable_item
+                            elif item_type == 'MarkupItem':
+                                if flag_inside_itemgroup:
+                                    flag_discountable_in_grp_inc_markup = True  # discountable item already set to True
+                                    # due to item group
+                                else:
+                                    flag_discountable_inc_markup = True
+                                if not flag_discountable_exc_markup or not flag_discountable_in_grp_exc_markup:
+                                    if line_amount != 0.0:
+                                        last_discountable_item = {'start': count_item_list, 'end': count_item_list,
+                                                                  'amount': line_amount}
+                                    else:
+                                        last_discountable_item = None
+
+                                if last_markupable_item:
+                                    item_list_markup_apply_to[count_item_list] = last_markupable_item
+
+                                    item_list_markup.append(count_item_list)
+                                else:
+                                    item_list_unknown_markup.append(count_item_list)
+                                    item_name_list[count_item_list] = 'Markup on-unknown item'
+
+                            elif item_type == 'DescriptionItem':
+                                # if not flag_discountable_inc_markup:
+                                #     start_subtotal_item = start_subtotal_item + 1
+                                # if flag_inside_itemgroup and (not flag_discountable_in_grp_inc_markup):
+                                #     start_group_item = start_group_item + 1
+                                # don't need to calculate the exact start item, those items will not be published or
+                                # discountable item ( put off the calculation to next loop )
+                                pass
+
+                            else:
+                                if flag_inside_itemgroup:
+                                    # already inside item group, no need to set the flag of discoutable item
+                                    flag_discountable_in_grp_exc_markup = True
+                                    flag_discountable_in_grp_inc_markup = True
+                                else:
+                                    flag_discountable_inc_markup = True
+                                    flag_discountable_exc_markup = True
+
+                                last_discountable_item = {'start': count_item_list, 'end': count_item_list,
+                                                          'amount': line_amount}
+                            previous_item_type = item_type
+                            last_markupable_item = last_discountable_item
+                        else:
+                            end_group_item = count_item_list - 1
+                            if end_group_item < start_group_item:
+                                # group has no items
+                                pos_group_items = None
+                            else:
+                                pos_group_items = {'start': start_group_item, 'end': end_group_item,
+                                                   'amount': line_amount}
+                            previous_item_type = 'ItemGroupEnd'
+                            last_discountable_item = pos_group_items
+                            last_markupable_item = last_discountable_item
+                            flag_inside_itemgroup = False
                     else:
+                        item_name_list[count_item_list] = ''
+                        # in case there is no item name for the line
                         cal_sub_total = cal_sub_total + float(line.get('amount'))
+
+                        last_discountable_item = {'start': count_item_list, 'end': count_item_list, 'amount':
+                            line_amount}
+                        previous_item_type = 'InventoryItem'
+                        last_markupable_item = last_discountable_item
+
+                        if flag_inside_itemgroup:
+                            # already inside item group, no need to set the flag of discoutable item
+                            flag_discountable_in_grp_exc_markup = True
+                            flag_discountable_in_grp_inc_markup = True
+                        else:
+                            flag_discountable_inc_markup = True
+                            flag_discountable_exc_markup = True
+
+            item_cost_discount_item_type = None
+            if 'itemCostDiscount' in record:
+                item_cost_discount = record['itemCostDiscount']
+                itemCostDiscount_internalId = item_cost_discount['internalId']
+                df_tmp = df_item[df_item['internalId'] == int(itemCostDiscount_internalId)]
+                item_cost_discount_item_type = df_tmp['itemType'].values[0]
+                item_cost_discount_item_name = df_tmp['reference'].values[0]
+
+                item_cost_discount_amount = float(record.get('itemCostDiscAmount'))
+                cal_sub_total = cal_sub_total + item_cost_discount_amount
+
+                if 'itemCostDiscTax1Amt' in record:
+                    item_cost_discount_tax = float(record.get('itemCostDiscTax1Amt'))
+                    item_cost_discount_tax_rate = item_cost_discount_tax / item_cost_discount_amount * 100
+                elif 'itemCostTaxRate1' in record:
+                    item_cost_discount_tax_rate = float(record.get('itemCostTaxRate1'))
+                    item_cost_discount_tax = item_cost_discount_amount * item_cost_discount_tax_rate * 0.01
+                else:
+                    item_cost_discount_tax = 0
+                    item_cost_discount_tax_rate = 0
+
+            exp_cost_discount_item_type = None
+            if 'expCostDiscount' in record:
+                exp_cost_discount = record['expCostDiscount']
+                expCostDiscount_internalId = exp_cost_discount['internalId']
+
+                df_tmp = df_item[df_item['internalId'] == int(expCostDiscount_internalId)]
+                exp_cost_discount_item_type = df_tmp['itemType'].values[0]
+                exp_cost_discount_item_name = df_tmp['reference'].values[0]
+
+                exp_cost_discount_amount = float(record.get('expCostDiscAmount'))
+                cal_sub_total = cal_sub_total + exp_cost_discount_amount
+
+                if 'expCostDiscTax1Amt' in record:
+                    exp_cost_discount_tax = float(record.get('expCostDiscTax1Amt'))
+                    exp_cost_discount_tax_rate = exp_cost_discount_tax / exp_cost_discount_amount * 100
+                elif 'expCostTaxRate1' in record:
+                    exp_cost_discount_tax_rate = float(record.get('expCostTaxRate1'))
+                    exp_cost_discount_tax = exp_cost_discount_amount * exp_cost_discount_tax_rate * 0.01
+                else:
+                    exp_cost_discount_tax = 0
+                    exp_cost_discount_tax_rate = 0
+
+            time_discount_item_type = None
+            if 'timeDiscount' in record:
+                time_discount = record['timeDiscount']
+                timeDiscount_internalId = time_discount['internalId']
+                df_tmp = df_item[df_item['internalId'] == int(timeDiscount_internalId)]
+                time_discount_item_name = df_tmp['reference'].values[0]
+                time_discount_item_type = df_tmp['itemType'].values[0]
+                print('time discount item type {}'.format(time_discount_item_type))
+
+                time_discount_amount = float(record.get('timeDiscAmount'))
+                if 'timeDiscTax1Amt' in record:
+                    time_discount_tax = float(record.get('timeDiscTax1Amt'))
+                    time_discount_tax_rate = time_discount_tax / time_discount_amount * 100
+                elif 'timeDiscTax1Rate' in record:
+                    time_discount_tax_rate = float(record.get('timeTaxRate1'))
+                    time_discount_tax = time_discount_amount * time_discount_tax_rate * 0.01
+                else:
+                    time_discount_tax = 0
+                    time_discount_tax_rate = 0
+
+                cal_sub_total = cal_sub_total + time_discount_amount
+
             if 'timeList' in record:
                 time_list = record['timeList']['time']
+                time_list_total = 0.0
+                time_list_name = ''
                 for time_line in time_list:
 
                     if time_line['apply'].upper() == 'TRUE':
+                        itemDisp = time_line.get('itemDisp')
                         amount = float(time_line.get('amount'))
                         cal_sub_total = cal_sub_total + amount
+                        time_list_total = time_list_total + amount
+                        time_list_name = time_list_name + ',' + itemDisp
+                time_list_name = time_list_name[1:]
 
             if 'itemCostList' in record:
                 item_cost_lines = record['itemCostList']['itemCost']
-                print(item_cost_lines)
+                item_cost_list_total = 0.0
+                item_cost_list_name = ''
                 for item_cost_line in item_cost_lines:
-                    print(item_cost_line)
                     apply = item_cost_line['apply'].upper() == 'TRUE'  # make sure apply exists in itemCost
                     if apply:
                         doc = item_cost_line.get('doc')
@@ -783,56 +1286,113 @@ class NetsuiteClient(object):
                         if item_internal_id != '0':
                             df_tmp = df_item[df_item['internalId'] == int(item_internal_id)]
                             item_type = df_tmp['itemType'].values[0]
+                            item_name = df_tmp['reference'].values[0]
                             if item_type not in ['ItemGroup', 'DescriptionItem', 'SubtotalItem']:
                                 amount = float(item_cost_line.get('amount', 0))
                                 cal_sub_total = cal_sub_total + amount
+                                item_cost_list_total = item_cost_list_total + amount
+                                item_cost_list_name = item_cost_list_name + ',' + item_name
+                item_cost_list_name = item_cost_list_name[1:]
+
             if 'expCostList' in record:
                 exp_cost_list = record['expCostList']['expCost']
+                exp_cost_list_total = 0.0
+                exp_cost_list_name = ''
                 for exp_cost in exp_cost_list:
                     if exp_cost['apply'].upper() == 'TRUE':
                         amount = float(exp_cost.get('amount'))
+                        memo = exp_cost.get('memo', '')
                         cal_sub_total = cal_sub_total + amount
-            if 'itemCostDiscount' in record:
-                item_cost_discount_amount = float(record.get('itemCostDiscAmount'))
-                cal_sub_total = cal_sub_total + item_cost_discount_amount
-
-            if 'expCostDiscount' in record:
-                exp_cost_discount_amount = float(record.get('expCostDiscAmount'))
-                cal_sub_total = cal_sub_total + exp_cost_discount_amount
-
-            if 'timeDiscount' in record:
-                time_discount_amount = float(record.get('timeDiscAmount'))
-                cal_sub_total = cal_sub_total + time_discount_amount
+                        exp_cost_list_total = exp_cost_list_total + amount
+                        exp_cost_list_name = exp_cost_list_name + ',' + memo
+                exp_cost_list_name = exp_cost_list_name[1:]
 
             discount_rate = record.get('discountRate')
             if discount_rate is not None and discount_rate[-1] == '%':
-                cal_discount_rate = 1 - -1 * float(discount_rate[:-1]) * 0.01
+                cal_transaction_discount_rate = 1 - -1 * float(discount_rate[:-1]) * 0.01
             elif discount_rate is not None and cal_sub_total != 0.0:
-                cal_discount_rate = 1 - -1 * discount_total / cal_sub_total
+                cal_transaction_discount_rate = 1 - -1 * discount_total / cal_sub_total
             else:
-                cal_discount_rate = 1
+                cal_transaction_discount_rate = 1
+
+            print("Invoice {} published discount {}".format(invoice_id, str(item_list_published_discounts)))
+            item_list_discount_rate = {}
+            item_list_tax_rate = {}
+            print("invoice {} dicount apply to {}".format(invoice_id, str(item_list_discount_apply_to)))
+
+            item_list_discount.reverse()
+            item_list_discount_to_discount = {}
+
+            print(item_list_discount)
+            for discount in item_list_discount:
+                discount_rate = item_list_discount_apply_to[discount][
+                                    'discount_rate']*item_list_discount_to_discount.get(discount, 1)
+                start = item_list_discount_apply_to[discount]['start']
+                end = item_list_discount_apply_to[discount]['end'] + 1
+                for i in range(start, end):
+                    if i in item_list_discount:
+                        item_list_discount_to_discount[i] = item_list_discount_to_discount.get(i, 1) + discount_rate
+            print(item_list_discount_to_discount)
+
+            for line_no, discount in item_list_discount_apply_to.items():
+
+                cal_line_discount_rate = discount['discount_rate'] * item_list_discount_to_discount.get(line_no,
+                                                                                                        1) * cal_transaction_discount_rate
+                cal_line_tax_rate = discount['tax_rate']  # already times 0.01
+                start = discount['start']
+                end = discount['end'] + 1
+
+                for i in range(start, end):
+                    if i in item_list_discount_rate:
+                        item_list_discount_rate[i] = item_list_discount_rate[i] + cal_line_discount_rate
+                        item_list_tax_rate[i] = item_list_tax_rate[i] + cal_line_tax_rate * cal_line_discount_rate
+                    else:
+                        item_list_discount_rate[i] = cal_line_discount_rate
+                        item_list_tax_rate[i] = cal_line_tax_rate
+
+            print("invoice {} discount rate {}".format(invoice_id, str(item_list_discount_rate)))
+            print("invoice {} tax rate {}".format(invoice_id, str(item_list_tax_rate)))
+
+            print("item name list {}".format(str(item_name_list)))
+            print("item markup apply to {}".format(str(item_list_markup_apply_to)))
+            for markup in item_list_markup:
+                start = item_list_markup_apply_to[markup]['start']
+                end = item_list_markup_apply_to[markup]['end'] + 1
+                name = ''
+                for i in range(start, end):
+                    if i in item_name_list:
+                        name = name + ',' + item_name_list[i]
+                name = 'Markup on-' + name[1:]
+                print(name)
+
+                item_name_list[markup] = name
 
             # section 2: itemList
             if 'itemList' in record:
                 item_lines = record['itemList']['item']
                 cal_sub_total = 0.0
 
+                count_item_list = 0
                 for item_line in item_lines:
+                    count_item_list = count_item_list + 1
                     if 'item' in item_line:
                         item_id = item_line['item'][0].get('internalId')
                         name = item_line['item'][0].get('name')
-                        print(df_item[df_item['internalId'] == int(item_id)])
+
                         if item_id != '0':
                             df_tmp = df_item[df_item['internalId'] == int(item_id)]
                             item_type = df_tmp['itemType'].values[0]
                             item_name = df_tmp['reference'].values[0]
 
-                            if item_type not in ['ItemGroup', 'DescriptionItem', 'SubtotalItem']:
+                            if item_type == 'MarkupItem':
+                                name = item_name_list[count_item_list]
+
+                            if item_type not in ['ItemGroup', 'DescriptionItem', 'SubtotalItem', 'DiscountItem'] or \
+                                    item_type == 'DiscountItem' and count_item_list in item_list_published_discounts:
                                 description = name
                                 quantity = float(item_line['quantity']) if 'quantity' in item_line else None
                                 rate = item_line.get('rate')
                                 amount = float(item_line.get('amount'))
-                                print('quantity {} rate {} amount {}:'.format(quantity, rate, amount))
                                 if quantity is not None:
                                     tgt_quantity = quantity
                                 elif rate is not None and rate[-1] != '%' and float(rate) != 0.0:
@@ -850,10 +1410,16 @@ class NetsuiteClient(object):
                                     tgt_unit_price = amount
 
                                 if item_type == 'DiscountItem':
-                                    tgt_discount = -1 * amount
-                                    cal_sum_discount = cal_sum_discount + tgt_discount
+                                    tgt_discount = -1 * amount * item_list_discount_to_discount.get(count_item_list,1) * \
+                                                   cal_line_discount_rate + amount*(1-cal_line_discount_rate)
+
+
                                 else:
-                                    tgt_discount = 0
+                                    print(item_list_discount_rate.get(count_item_list, 0))
+                                    tgt_discount = -1 * amount * round(item_list_discount_rate.get(count_item_list,
+                                                                                                   0),2) + amount*(1-cal_line_discount_rate)
+
+                                cal_sum_discount = cal_sum_discount + tgt_discount
 
                                 if item_type == 'DiscountItem':
                                     tgt_net_total = 0
@@ -882,20 +1448,27 @@ class NetsuiteClient(object):
                                         tax_code = item_line['taxCode'].get('name')
                                     else:
                                         tax_code = None
-                                        print('Credit Memo {} Item {} doesnt have tax_code'.format(invoice_number,
-                                                                                                   item_id))
 
                                 if 'isTaxable' in item_line:
                                     if item_line['isTaxable'].upper() == 'TRUE':
                                         tax_rate_1 = invoice_tax_rate
                                     else:
                                         tax_rate_1 = 0
+                                elif 'tax1Amt' in item_line:
+                                    tax1_amt = float(item_line['tax1Amt'])
+                                    tax_rate_1 = tax1_amt / amount * 100 if tax1_amt != 0.0 else 0
+
                                 else:
                                     tax_rate_1 = float(item_line.get('taxRate1', 0))
 
+                                if item_type == 'DiscountItem':
+                                    tax_rate_1 = tax_rate_1 * item_list_discount_to_discount.get(count_item_list,1)
+                                else:
+                                    tax_rate_1 = tax_rate_1 + item_list_tax_rate.get(count_item_list, 0)
+
                                 if str(is_pre_tax).upper() == 'TRUE':
                                     print('isPreTax {} is TRUE'.format(is_pre_tax))
-                                    tgt_tax_amount = amount * cal_discount_rate * tax_rate_1 * 0.01
+                                    tgt_tax_amount = amount * cal_transaction_discount_rate * tax_rate_1 * 0.01
                                 else:
                                     tgt_tax_amount = amount * tax_rate_1 * 0.01
                                 tgt_total = tgt_net_total + tgt_tax_amount - tgt_discount
@@ -914,7 +1487,7 @@ class NetsuiteClient(object):
                                                           tgt_tax_code=tax_code,
                                                           tgt_tax_amount=round(tgt_tax_amount, 2),
                                                           cal_sub_total=cal_sub_total,
-                                                          cal_discount_rate=cal_discount_rate,
+                                                          cal_discount_rate=cal_transaction_discount_rate,
                                                           cal_item_type=item_type,
                                                           isPreTax=is_pre_tax,
                                                           src_quantity=quantity,
@@ -942,7 +1515,10 @@ class NetsuiteClient(object):
                         else:
                             tgt_unit_price = amount
 
-                        tgt_discount = 0
+                        tgt_discount = -1 * amount * round(item_list_discount_rate.get(count_item_list,
+                                                                                       0), 2) + amount * (
+                                                   1 - cal_line_discount_rate)
+                        cal_sum_discount = cal_sum_discount + tgt_discount
 
                         tgt_net_total = amount
 
@@ -963,15 +1539,21 @@ class NetsuiteClient(object):
 
                         if 'isTaxable' in item_line:
                             if item_line['isTaxable'].upper() == 'TRUE':
-                                tax_code = invoice_tax_rate
+                                tax_rate_1 = invoice_tax_rate
                             else:
                                 tax_rate_1 = 0
+                        elif 'tax1Amt' in item_line:
+                            tax1_amt = float(time_line['tax1Amt'])
+                            tax_rate_1 = tax1_amt / amount * 100 if tax1_amt != 0.0 else 0
+
                         else:
                             tax_rate_1 = float(item_line.get('taxRate1', 0))
 
+                        tax_rate_1 = tax_rate_1 + item_list_tax_rate.get(count_item_list, 0)
+
                         if str(is_pre_tax).upper() == 'TRUE':
                             print('isPreTax {} is TRUE'.format(is_pre_tax))
-                            tgt_tax_amount = amount * cal_discount_rate * tax_rate_1 * 0.01
+                            tgt_tax_amount = amount * cal_transaction_discount_rate * tax_rate_1 * 0.01
                         else:
                             tgt_tax_amount = amount * tax_rate_1 * 0.01
                         tgt_total = tgt_net_total + tgt_tax_amount - tgt_discount
@@ -990,7 +1572,7 @@ class NetsuiteClient(object):
                                                   tgt_tax_code=tax_code,
                                                   tgt_tax_amount=round(tgt_tax_amount, 2),
                                                   cal_sub_total=cal_sub_total,
-                                                  cal_discount_rate=cal_discount_rate,
+                                                  cal_discount_rate=cal_transaction_discount_rate,
                                                   cal_item_type=item_type,
                                                   isPreTax=is_pre_tax,
                                                   src_quantity=quantity,
@@ -1024,7 +1606,10 @@ class NetsuiteClient(object):
                         pos = quantity.index(':')
                         tgt_quantity = round(int(quantity[:pos]) + int(quantity[pos + 1:]) / 60, 2)
                         tgt_unit_price = rate
-                        tgt_discount = 0
+                        if time_discount_item_type == 'DiscountItem':
+                            tgt_discount = amount * time_discount_amount / time_list_total
+                        else:
+                            tgt_discount = 0
                         tgt_net_total = amount
                         tgt_invoice_net_total = tgt_invoice_net_total + tgt_net_total
 
@@ -1035,16 +1620,24 @@ class NetsuiteClient(object):
                             print(
                                 'Invoice {} Item {} doesnt have tax_code'.format(invoice_number,
                                                                                  item_id))
-                        tax_rate_1 = float(time_line.get('taxRate1', 0))
+                        if 'tax1Amt' in time_line:
+                            tax1_amt = float(time_line['tax1Amt'])
+                            tax_rate_1 = tax1_amt / amount * 100 if tax1_amt != 0.0 else 0
+
+                        else:
+                            tax_rate_1 = float(time_line.get('taxRate1', 0))
+
+                        if time_discount_item_type == 'DiscountItem':
+                            tax_rate_1 = tax_rate_1 + time_discount_tax_rate * time_discount_amount / time_list_total
 
                         if str(is_pre_tax).upper() == 'TRUE':
                             print('isPreTax {} is True'.format(is_pre_tax))
-                            tgt_tax_amount = amount * cal_discount_rate * tax_rate_1 * 0.01
+                            tgt_tax_amount = amount * tax_rate_1 * cal_transaction_discount_rate * 0.01
                         else:
                             tgt_tax_amount = amount * tax_rate_1 * 0.01
 
                         tgt_total = tgt_net_total + tgt_tax_amount - tgt_discount
-                        if tgt_tax_amount == 0.0:
+                        if tax_rate_1 == 0.0:
                             tgt_invoice_tax_exempt_total = tgt_invoice_tax_exempt_total + tgt_total
                         invoice_lines.append(dict(invoice_id=invoice_id,
                                                   invoice_number=invoice_number,
@@ -1059,7 +1652,7 @@ class NetsuiteClient(object):
                                                   tgt_tax_code=tax_code,
                                                   tgt_tax_amount=round(tgt_tax_amount, 2),
                                                   cal_sub_total=cal_sub_total,
-                                                  cal_discount_rate=cal_discount_rate,
+                                                  cal_discount_rate=cal_transaction_discount_rate,
                                                   cal_item_type=item_type,
                                                   isPreTax=is_pre_tax,
                                                   src_quantity=quantity,
@@ -1086,7 +1679,8 @@ class NetsuiteClient(object):
                             item_type = df_tmp['itemType'].values[0]
                             item_name = df_tmp['reference'].values[0]
 
-                            if item_type not in ['ItemGroup', 'DescriptionItem', 'SubtotalItem']:
+                            if item_type not in ['ItemGroup', 'DescriptionItem', 'SubtotalItem', 'DiscountItem',
+                                                 'MarkupItem']:
 
                                 description = name
                                 quantity = float(
@@ -1110,7 +1704,10 @@ class NetsuiteClient(object):
                                 else:
                                     tgt_unit_price = amount
 
-                                tgt_discount = 0
+                                if item_cost_discount_item_type == 'DiscountItem':
+                                    tgt_discount = amount * item_cost_discount_amount / item_cost_list_total
+                                else:
+                                    tgt_discount = 0
 
                                 tgt_net_total = amount
 
@@ -1122,11 +1719,20 @@ class NetsuiteClient(object):
                                     tax_code = None
                                     print('Credit Memo {} Item {} doesnt have tax_code'.format(invoice_number,
                                                                                                item_id))
-                                tax_rate_1 = float(item_cost_line.get('taxRate1', 0))
+                                if 'tax1Amt' in item_cost_line:
+                                    tax1_amt = float(item_cost_line['tax1Amt'])
+                                    tax_rate_1 = tax1_amt / amount * 100 if tax1_amt != 0.0 else 0
+
+                                else:
+                                    tax_rate_1 = float(item_cost_line.get('taxRate1', 0))
+
+                                if item_cost_discount_item_type == 'DiscountItem':
+                                    tax_rate_1 = tax_rate_1 + item_cost_discount_tax_rate * item_cost_discount_amount \
+                                                 / item_cost_list_total
 
                                 if str(is_pre_tax).upper() == 'TRUE':
                                     print('isPreTax {} is True'.format(is_pre_tax))
-                                    tgt_tax_amount = amount * cal_discount_rate * tax_rate_1 * 0.01
+                                    tgt_tax_amount = amount * cal_transaction_discount_rate * tax_rate_1 * 0.01
                                 else:
                                     tgt_tax_amount = amount * tax_rate_1 * 0.01
 
@@ -1146,7 +1752,7 @@ class NetsuiteClient(object):
                                                           tgt_tax_code=tax_code,
                                                           tgt_tax_amount=round(tgt_tax_amount, 2),
                                                           cal_sub_total=cal_sub_total,
-                                                          cal_discount_rate=cal_discount_rate,
+                                                          cal_discount_rate=cal_transaction_discount_rate,
                                                           cal_item_type=item_type,
                                                           isPreTax=is_pre_tax,
                                                           src_quantity=None,
@@ -1167,16 +1773,28 @@ class NetsuiteClient(object):
                         tgt_quantity = 1
                         amount = float(exp_cost.get('amount'))
                         tgt_unit_price = amount
-                        tgt_discount = 0
+                        if exp_cost_discount_item_type == 'DiscountItem':
+                            tgt_discount = amount * exp_cost_discount_amount / exp_cost_list_total
+                        else:
+                            tgt_discount = 0
                         tgt_net_total = amount
                         tgt_invoice_net_total = tgt_invoice_net_total + tgt_net_total
 
                         tax_code = exp_cost['taxCode'].get('name') if 'taxCode' in exp_cost else None
-                        tax_rate_1 = float(exp_cost.get('taxRate1', 0))
+                        if 'tax1Amt' in exp_cost:
+                            tax1_amt = float(exp_cost['tax1Amt'])
+                            tax_rate_1 = tax1_amt / amount * 100 if tax1_amt != 0.0 else 0
+
+                        else:
+                            tax_rate_1 = float(exp_cost.get('taxRate1', 0))
+
+                        if item_cost_discount_item_type == 'DiscountItem':
+                            tax_rate_1 = tax_rate_1 + exp_cost_discount_tax_rate * exp_cost_discount_amount / \
+                                         exp_cost_list_total
 
                         if str(is_pre_tax).upper() == 'TRUE':
                             print('isPreTax {} is True'.format(is_pre_tax))
-                            tgt_tax_amount = amount * cal_discount_rate * tax_rate_1 * 0.01
+                            tgt_tax_amount = amount * cal_transaction_discount_rate * tax_rate_1 * 0.01
                         else:
                             tgt_tax_amount = amount * tax_rate_1 * 0.01
 
@@ -1196,8 +1814,8 @@ class NetsuiteClient(object):
                                                   tgt_tax_code=tax_code,
                                                   tgt_tax_amount=round(tgt_tax_amount, 2),
                                                   cal_sub_total=cal_sub_total,
-                                                  cal_discount_rate=cal_discount_rate,
-                                                  cal_item_type=item_type,
+                                                  cal_discount_rate=cal_transaction_discount_rate,
+                                                  cal_item_type=None,
                                                   isPreTax=is_pre_tax,
                                                   src_quantity=None,
                                                   src_amount=amount,
@@ -1206,39 +1824,17 @@ class NetsuiteClient(object):
                                                   updated_at=updated_at
                                                   ))
             # section 6 itemCostDiscount
-            if 'itemCostDiscount' in record:
-                item_cost_discount = record['itemCostDiscount']
-                itemCostDiscount_internalId = item_cost_discount['internalId']
-                itemCostDiscount_name = item_cost_discount['name']
-                description = itemCostDiscount_name
-                df_tmp = df_item[df_item['internalId'] == int(itemCostDiscount_internalId)]
-                item_type = df_tmp['itemType'].values[0]
-                item_name = df_tmp['reference'].values[0]
-                item_cost_discount_amount = float(record.get('itemCostDiscAmount'))
+            if item_cost_discount_item_type == 'MarkupItem':
+
+                description = "Markup on-" + item_cost_list_name
+
                 tgt_quantity = 1
+                tgt_discount = 0
+                tgt_unit_price = item_cost_discount_amount
+                tgt_net_total = item_cost_discount_amount
 
-                if item_type == 'DiscountItem':
-                    tgt_unit_price = 0
-                elif item_type == 'MarkupItem':
-                    tgt_unit_price = item_cost_discount_amount
-
-                if item_type == 'DiscountItem':
-                    tgt_discount = -1 * item_cost_discount_amount
-                    cal_sum_discount = cal_sum_discount + tgt_discount
-                elif item_type == 'MarkupItem':
-                    tgt_discount = 0
-
-                if item_type == 'DiscountItem':
-                    tgt_unit_price = 0
-                elif item_type == 'MarkupItem':
-                    tgt_unit_price = item_cost_discount_amount
-
-                if item_type == 'DiscountItem':
-                    tgt_net_total = 0
-                elif item_type == 'MarkupItem':
-                    tgt_net_total = item_cost_discount_amount
-
-                item_cost_tax_code = record['itemCostTaxCode']['name'] if 'itemCostTaxCode' in record else None  #
+                item_cost_tax_code = record['itemCostTaxCode'][
+                    'name'] if 'itemCostTaxCode' in record else None  #
 
                 item_cost_tax_rate = float(record.get('itemCostTaxRate1', 0))
 
@@ -1246,7 +1842,7 @@ class NetsuiteClient(object):
 
                 if str(is_pre_tax).upper() == 'TRUE':
                     print('isPreTax {} is True'.format(is_pre_tax))
-                    tgt_tax_amount = item_cost_discount_amount * cal_discount_rate * item_cost_tax_rate * 0.01
+                    tgt_tax_amount = item_cost_discount_amount * cal_transaction_discount_rate * item_cost_tax_rate * 0.01
                 else:
                     tgt_tax_amount = item_cost_discount_amount * item_cost_tax_rate * 0.01
                 tgt_total = tgt_net_total + tgt_tax_amount - tgt_discount
@@ -1256,7 +1852,7 @@ class NetsuiteClient(object):
                                           invoice_number=invoice_number,
                                           src_internalId=itemCostDiscount_internalId,
                                           tgt_description=description,
-                                          tgt_item_name=item_name,
+                                          tgt_item_name=item_cost_discount_item_name,
                                           tgt_quantity=tgt_quantity,
                                           tgt_discount=tgt_discount,
                                           tgt_total=round(tgt_total, 2),
@@ -1265,8 +1861,8 @@ class NetsuiteClient(object):
                                           tgt_tax_code=item_cost_tax_code,
                                           tgt_tax_amount=round(tgt_tax_amount, 2),
                                           cal_sub_total=cal_sub_total,
-                                          cal_discount_rate=cal_discount_rate,
-                                          cal_item_type=item_type,
+                                          cal_discount_rate=cal_transaction_discount_rate,
+                                          cal_item_type=item_cost_discount_item_type,
                                           isPreTax=is_pre_tax,
                                           src_expDiscountAmount=item_cost_discount_amount,
                                           src_timeTaxRate1=item_cost_tax_rate,
@@ -1277,39 +1873,18 @@ class NetsuiteClient(object):
                                           ))
 
             # section 7 expCostDiscount
-            if 'expCostDiscount' in record:
-                exp_cost_discount = record['expCostDiscount']
-                expCostDiscount_internalId = exp_cost_discount['internalId']
-                expCostDiscount_name = exp_cost_discount['name']
-                description = expCostDiscount_name
-                df_tmp = df_item[df_item['internalId'] == int(expCostDiscount_internalId)]
-                item_type = df_tmp['itemType'].values[0]
-                item_name = df_tmp['reference'].values[0]
-                exp_cost_discount_amount = float(record.get('expCostDiscAmount'))
+            if exp_cost_discount_item_type == 'MarkupItem':
+
+                description = "Markup on-" + exp_cost_list_name
+
                 tgt_quantity = 1
+                tgt_discount = 0
+                tgt_unit_price = exp_cost_discount_amount
 
-                if item_type == 'DiscountItem':
-                    tgt_unit_price = 0
-                elif item_type == 'MarkupItem':
-                    tgt_unit_price = exp_cost_discount_amount
+                tgt_net_total = exp_cost_discount_amount
 
-                if item_type == 'DiscountItem':
-                    tgt_discount = -1 * exp_cost_discount_amount
-                    cal_sum_discount = cal_sum_discount + tgt_discount
-                elif item_type == 'MarkupItem':
-                    tgt_discount = 0
-
-                if item_type == 'DiscountItem':
-                    tgt_unit_price = 0
-                elif item_type == 'MarkupItem':
-                    tgt_unit_price = exp_cost_discount_amount
-
-                if item_type == 'DiscountItem':
-                    tgt_net_total = 0
-                elif item_type == 'MarkupItem':
-                    tgt_net_total = exp_cost_discount_amount
-
-                exp_cost_tax_code = record['expCostTaxCode']['name'] if 'expCostTaxCode' in record else None  #
+                exp_cost_tax_code = record['expCostTaxCode'][
+                    'name'] if 'expCostTaxCode' in record else None  #
 
                 exp_cost_tax_rate = float(record.get('expCostTaxRate1', 0))
 
@@ -1317,7 +1892,7 @@ class NetsuiteClient(object):
 
                 if str(is_pre_tax).upper() == 'TRUE':
                     print('isPreTax {} is True'.format(is_pre_tax))
-                    tgt_tax_amount = exp_cost_discount_amount * cal_discount_rate * exp_cost_tax_rate * 0.01
+                    tgt_tax_amount = exp_cost_discount_amount * cal_transaction_discount_rate * exp_cost_tax_rate * 0.01
                 else:
                     tgt_tax_amount = exp_cost_discount_amount * exp_cost_tax_rate * 0.01
                 tgt_total = tgt_net_total + tgt_tax_amount - tgt_discount
@@ -1329,7 +1904,7 @@ class NetsuiteClient(object):
                                           invoice_number=invoice_number,
                                           src_internalId=expCostDiscount_internalId,
                                           tgt_description=description,
-                                          tgt_item_name=item_name,
+                                          tgt_item_name=exp_cost_discount_item_name,
                                           tgt_quantity=tgt_quantity,
                                           tgt_discount=tgt_discount,
                                           tgt_total=round(tgt_total, 2),
@@ -1338,8 +1913,8 @@ class NetsuiteClient(object):
                                           tgt_tax_code=exp_cost_tax_code,
                                           tgt_tax_amount=round(tgt_tax_amount, 2),
                                           cal_sub_total=cal_sub_total,
-                                          cal_discount_rate=cal_discount_rate,
-                                          cal_item_type=item_type,
+                                          cal_discount_rate=cal_transaction_discount_rate,
+                                          cal_item_type=exp_cost_discount_item_type,
                                           isPreTax=is_pre_tax,
                                           src_expDiscountAmount=exp_cost_discount_amount,
                                           src_timeTaxRate1=exp_cost_tax_rate,
@@ -1349,37 +1924,15 @@ class NetsuiteClient(object):
                                           updated_at=updated_at
                                           ))
             # section 8 timeDiscount
-            if 'timeDiscount' in record:
-                time_discount = record['timeDiscount']
-                timeDiscount_internalId = time_discount['internalId']
-                timeDiscount_name = time_discount['name']
-                description = timeDiscount_name
-                df_tmp = df_item[df_item['internalId'] == int(timeDiscount_internalId)]
-                item_type = df_tmp['itemType'].values[0]
-                item_name = df_tmp['reference'].values[0]
+            if time_discount_item_type == 'MarkupItem':
+                description = "Markup on-" + time_list_name
+
                 time_discount_amount = float(record.get('timeDiscAmount'))
                 tgt_quantity = 1
+                tgt_discount = 0
 
-                if item_type == 'DiscountItem':
-                    tgt_unit_price = 0
-                elif item_type == 'MarkupItem':
-                    tgt_unit_price = time_discount_amount
-
-                if item_type == 'DiscountItem':
-                    tgt_discount = -1 * time_discount_amount
-                    cal_sum_discount = cal_sum_discount + tgt_discount
-                elif item_type == 'MarkupItem':
-                    tgt_discount = 0
-
-                if item_type == 'DiscountItem':
-                    tgt_unit_price = 0
-                elif item_type == 'MarkupItem':
-                    tgt_unit_price = time_discount_amount
-
-                if item_type == 'DiscountItem':
-                    tgt_net_total = 0
-                elif item_type == 'MarkupItem':
-                    tgt_net_total = time_discount_amount
+                tgt_unit_price = time_discount_amount
+                tgt_net_total = time_discount_amount
 
                 time_tax_code = record['timeTaxCode']['name'] if 'timeTaxCode' in record else None  #
 
@@ -1389,7 +1942,7 @@ class NetsuiteClient(object):
 
                 if str(is_pre_tax).upper() == 'TRUE':
                     print('isPreTax {} is True'.format(is_pre_tax))
-                    tgt_tax_amount = time_discount_amount * cal_discount_rate * time_tax_rate * 0.01
+                    tgt_tax_amount = time_discount_amount * cal_transaction_discount_rate * time_tax_rate * 0.01
                 else:
                     tgt_tax_amount = time_discount_amount * time_tax_rate * 0.01
                 tgt_total = tgt_net_total + tgt_tax_amount - tgt_discount
@@ -1400,7 +1953,7 @@ class NetsuiteClient(object):
                                           invoice_number=invoice_number,
                                           src_internalId=timeDiscount_internalId,
                                           tgt_description=description,
-                                          tgt_item_name=item_name,
+                                          tgt_item_name=time_discount_item_name,
                                           tgt_quantity=tgt_quantity,
                                           tgt_discount=tgt_discount,
                                           tgt_total=round(tgt_total, 2),
@@ -1409,8 +1962,8 @@ class NetsuiteClient(object):
                                           tgt_tax_code=time_tax_code,
                                           tgt_tax_amount=round(tgt_tax_amount, 2),
                                           cal_sub_total=cal_sub_total,
-                                          cal_discount_rate=cal_discount_rate,
-                                          cal_item_type=item_type,
+                                          cal_discount_rate=cal_transaction_discount_rate,
+                                          cal_item_type=time_discount_item_type,
                                           isPreTax=is_pre_tax,
                                           src_timeDiscountAmount=time_discount_amount,
                                           src_taxRate1=time_tax_rate,
@@ -1550,7 +2103,7 @@ class NetsuiteClient(object):
             cal_credit_memo_apply = df_credit_memo_apply[df_credit_memo_apply['doc'] == int(invoice_id)][[
                 'amount']].sum().values[0]
 
-            print('customer payment {} credit memo apply {}'.format(cal_customer_payment_apply, cal_credit_memo_apply))
+            # print('customer payment {} credit memo apply {}'.format(cal_customer_payment_apply, cal_credit_memo_apply))
             tgt_invoice_outstanding_total = tgt_invoice_due_total + cal_redemption_total - cal_credit_memo_apply - cal_customer_payment_apply
             tgt_invoice_apply_tax_after_discount = is_pre_tax
             invoice.append(dict(id=invoice_id,
@@ -1600,6 +2153,41 @@ class NetsuiteClient(object):
 
         df_invoice_line.to_csv(line_csv_path)
 
+    def convert_invoice_to_csv_v2(self):
+
+        #     'internalId', 'type', 'createdDate', 'lastModifiedDate'
+        #     'entity'
+        #
+        # 'tranDate' 'tranId' 'createdFrom' 'postingPeriod' 'location' 'subsidiary'
+        # 'currency' 'dueDate' 'salesRep' 'totalCostEstimate' 'estGrossProfit'
+        # 'estGrossProfitPercent' 'account' 'exchangeRate' 'currencyName'
+        # 'toBePrinted' 'toBeEmailed' 'toBeFaxed' 'billingAddress'
+        # 'billAddressList' 'shippingAddress' 'shipIsResidential' 'subTotal'
+        # 'canHaveStackable' 'taxTotal' 'total' 'status' 'email'
+        # 'itemCostDiscPrint' 'expCostDiscPrint' 'timeDiscPrint' 'itemList'
+        # 'customFieldList' 'itemCostList' 'memo' 'fax' 'terms' 'startDate'
+        # 'endDate' 'salesEffectiveDate' 'discountItem' 'discountRate' 'shipDate'
+        # 'discountTotal' 'shipGroupList' 'shipAddressList' 'shipMethod'
+        # 'shippingCost' 'shippingTax1Rate' 'shippingTaxCode' 'handlingTaxCode'
+        # 'handlingTax1Rate' 'handlingCost' 'altShippingCost' 'altHandlingCost'
+        # 'expCostDiscount' 'expCostDiscRate' 'expCostDiscAmount' 'expCostTaxRate1'
+        # 'expCostTaxCode' 'expCostDiscTax1Amt' 'expCostList' 'giftCertApplied'
+        # 'giftCertRedemptionList' 'leadSource' 'itemCostDiscount'
+        # 'itemCostDiscRate' 'itemCostDiscAmount' 'itemCostTaxRate1'
+        # 'itemCostTaxCode' 'itemCostDiscTax1Amt' 'timeDiscount' 'timeDiscRate'
+        # 'timeDiscAmount' 'timeTaxRate1' 'timeTaxCode' 'timeDiscTax1Amt'
+        # 'timeList'
+        records = self.read_json_files(ep.INVOICE, self.batch_id)
+        df_raw_invoice = pd.DataFrame.from_dict(records,
+                                                columns=['internalId', 'type', 'createdDate', 'lastModifiedDate',
+                                                         'tranDate', 'tranId', 'currency', 'dueDate', 'exchangeRate',
+                                                         'billingAddress',
+                                                         'billAddressList', 'shippingAddress', 'subTotal',
+                                                         'canHaveStackable', 'taxTotal', 'total', 'status', 'terms',
+                                                         'discountItem', 'discountRate',
+                                                         'discountTotal', 'shipAddressList'])
+        print(df_raw_invoice.columns.values)
+
     def read_json_files(self, endpoint, batch_id):
 
         file_path = get_json_path()
@@ -1624,12 +2212,12 @@ class NetsuiteClient(object):
 if __name__ == '__main__':
     testing = NetsuiteClient()
 
-    testing.convert_currency_to_csv()
-    testing.convert_item_to_csv()
-    testing.convert_customer_to_csv()
-    testing.convert_vendor_bill_to_csv()
-    testing.convert_time_bill_to_csv()
+    # testing.convert_currency_to_csv()
+    # testing.convert_item_to_csv()
+    # testing.convert_customer_to_csv()
+    # testing.convert_vendor_bill_to_csv()
+    # testing.convert_time_bill_to_csv()
     testing.convert_credit_memo_to_csv()
-    testing.convert_credit_memo_apply_to_csv()
-    testing.convert_customer_payment_apply_to_csv()
-    testing.convert_invoice_to_csv()
+    # testing.convert_credit_memo_apply_to_csv()
+    # testing.convert_customer_payment_apply_to_csv()
+    # testing.convert_invoice_to_csv()

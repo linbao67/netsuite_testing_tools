@@ -8,6 +8,7 @@ CUSTOMER_PAYMENT = 'customerPayment'
 DELETED_DATA = 'deletedData'
 VENDOR_BILL = 'vendorBill'
 ACCOUNTING_PERIOD = 'accountingPeriod'
+CASH_REFUND = 'cashRefund'
 
 SERVICE = 'service'
 SEARCH = 'Search'
@@ -65,7 +66,7 @@ SERVICE_FIELD = {
 # Credit Memo includes credit memo, credit memo items, credit memo apply (credit note allocation)
 ENDPOINTS = [
     CUSTOMER, ITEM, ACCOUNTING_PERIOD, TIME_BILL, CUSTOMER_PAYMENT, VENDOR_BILL, CREDIT_MEMO,
-    INVOICE
+    INVOICE, CASH_REFUND
 ]
 
 ENDPOINTS_FIELDS = {
@@ -106,6 +107,16 @@ ENDPOINTS_FIELDS = {
         BODY_FIELDS_ONLY: False,
         REQUIRES_SEARCH_TYPE: True,
         TRANSACTION_TYPE: INVOICE
+    },
+    CASH_REFUND: {
+        SERVICE: SEARCH,
+        SEARCH: 'TransactionSearch',
+        SEARCH_NAMESPACE: 'urn:sales_2019_2.transactions.webservices.netsuite.com',
+        BASIC_SEARCH: 'TransactionSearchBasic',
+        LAST_MODIFIED_DATE: 'lastModifiedDate',
+        BODY_FIELDS_ONLY: False,
+        REQUIRES_SEARCH_TYPE: True,
+        TRANSACTION_TYPE: CASH_REFUND
     },
     CREDIT_MEMO: {
         SERVICE: SEARCH,

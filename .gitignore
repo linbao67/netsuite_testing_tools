@@ -131,3 +131,6 @@ dmypy.json
 #Mac
 .idea/
 .DS_Store
+
+# generated files
+resources

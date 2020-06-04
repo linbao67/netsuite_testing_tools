@@ -17,6 +17,7 @@ class NetsuiteClient(object):
 
     def __init__(self):
         self.batch_id = get_property('parameters', 'BATCH_ID')
+        self.realm = get_realm()
 
     def generate_currency(self):
         endpoint = 'currency'
@@ -28,8 +29,8 @@ class NetsuiteClient(object):
         headers = {"Content-Type": "application/soap+xml; charset=UTF-8",
                    "Content-Length": str(len(soap_service_xml)),
                    "SOAPAction": service}
-        print(soap_service_xml)
-        response = requests.post(url='https://tstdrv2177818.suitetalk.api.netsuite.com/services/NetSuitePort_2019_2',
+        response = requests.post(url='https://{}.suitetalk.api.netsuite.com/services/NetSuitePort_2019_2'.format(
+            self.realm),
                                  headers=headers,
                                  data=soap_service_xml)
 
@@ -73,7 +74,8 @@ class NetsuiteClient(object):
                    "Content-Length": str(len(soap_service_xml)),
                    "SOAPAction": service}
 
-        response = requests.post(url='https://tstdrv2177818.suitetalk.api.netsuite.com/services/NetSuitePort_2019_2',
+        response = requests.post(url='https://{}.suitetalk.api.netsuite.com/services/NetSuitePort_2019_2'.format(
+            self.realm),
                                  headers=headers,
                                  data=soap_service_xml)
         print("Save xml file for endpoint {} with page index {}".format(endpoint, page_index))
@@ -151,8 +153,6 @@ class NetsuiteClient(object):
         update_property_list(property_list)
 
     def get_sync_info(self, response_json, service):
-
-        print(response_json)
 
         response_field = ep.SERVICE_FIELD[service][ep.RESPONSE_FIELD]
         result_field = ep.SERVICE_FIELD[service][ep.RESULT_FIELD]

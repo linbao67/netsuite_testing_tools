@@ -1,15 +1,13 @@
-import datetime
 import json
 import logging
 
-import pytz
 import requests
 import xmltodict
 
 import main.netsuite.endpoints as ep
 from main.util.config_util import get_property, get_realm, get_password, get_user_name, set_property, \
     update_property_list
-from main.util.file_utils import save_to_file, save_to_json, read_xml_file
+from main.util.file_utils import save_to_json
 from main.util.netsuite_utils import passport, create_advanced_search, search_more_with_id, delete_invoice
 
 
@@ -19,7 +17,7 @@ class NetsuiteClient(object):
         self.batch_id = get_property('parameters', 'BATCH_ID')
         self.realm = get_realm()
 
-    def get_invoice_list(self, start_invoice_id, end_invoice_id):
+    def get_and_delete_invoice_list(self, start_invoice_id, end_invoice_id):
         endpoint='invoice'
         page_index = int(get_property(endpoint, 'PAGE_INDEX'))
         print('endpoint {} page index {}'.format(endpoint, page_index))
@@ -42,13 +40,13 @@ class NetsuiteClient(object):
             self.realm),
             headers=headers,
             data=soap_service_xml)
-        print("Save xml file for endpoint {} with page index {}".format(endpoint, page_index))
+        print("Get xml file for endpoint {} with page index {}".format(endpoint, page_index))
 
 
         force_list = {'searchRow'}
         response_dict = xmltodict.parse(response.text, process_namespaces=True, namespaces=ep.ESCAPE_NAMESPACES,
                                         attr_prefix='', cdata_key='', force_list=force_list)
-        print(response_dict)
+        print("XML to Json: {}".format(response_dict))
 
         response_json = json.loads(json.dumps(response_dict))
         response_field = ep.SERVICE_FIELD[service][ep.RESPONSE_FIELD]
@@ -65,7 +63,7 @@ class NetsuiteClient(object):
             deleted_list = list(set(invoice_list))
 
             delete_xml = delete_invoice(deleted_list,_soapheaders={"passport": self.generate_passport()})
-            print(delete_xml)
+            print("build delete xml: {}".format(delete_xml))
             headers = {"Content-Type": "application/soap+xml; charset=UTF-8",
                        "Content-Length": str(len(delete_xml)),
                        "SOAPAction": 'deleteList'}
@@ -75,7 +73,7 @@ class NetsuiteClient(object):
                 self.realm),
                 headers=headers,
                 data=delete_xml)
-            print(delete_response.text)
+            print("delete_response: {}".format(delete_response.text))
 
 
 
@@ -145,27 +143,7 @@ if __name__ == '__main__':
 
     result = True
     while result:
-        result = netsuite_client.get_invoice_list(49399,49400)
-
-    # netsuite_client.update_batch_id()
-    # netsuite_client.regenerate_json_file(ep.INVOICE, 1, 1)
-    # netsuite_client.regenerate_json_file(ep.INVOICE, 1, 2)
-    # netsuite_client.regenerate_json_file(ep.INVOICE, 1, 3)
-    # netsuite_client.regenerate_json_file(ep.INVOICE, 1, 4)
-    # netsuite_client.regenerate_json_file(ep.INVOICE, 1, 5)
-    # netsuite_client.regenerate_json_file(ep.INVOICE, 1, 6)
-    # netsuite_client.regenerate_json_file(ep.INVOICE, 1, 7)
-    # netsuite_client.regenerate_json_file(ep.INVOICE, 1, 8)
-    # netsuite_client.regenerate_json_file(ep.INVOICE, 1, 9)
-    # netsuite_client.regenerate_json_file(ep.INVOICE, 1, 10)
-    # netsuite_client.regenerate_json_file(ep.INVOICE, 1, 11)
-
-    # netsuite_client.regenerate_json_file(ep.CUSTOMER_PAYMENT, 1, 1)
-    # netsuite_client.regenerate_json_file(ep.CUSTOMER_PAYMENT, 1, 2)
-    # netsuite_client.regenerate_json_file(ep.CUSTOMER_PAYMENT, 1, 3)
-    # netsuite_client.regenerate_json_file(ep.CUSTOMER_PAYMENT, 1, 4)
-    #
-    # netsuite_client.regenerate_json_file(ep.CREDIT_MEMO, 1, 1)
+        result = netsuite_client.get_and_delete_invoice_list(5735, 5739)
 
 
 

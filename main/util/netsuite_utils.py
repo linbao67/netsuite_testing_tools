@@ -341,6 +341,46 @@ def search_internal_id_criteria(searchValue, operator):
                       'ns2:internalId="{}" xsi:type="ns2:RecordRef"/></ns2:internalId>'.format(operator, searchValue)
     return internal_id_xml
 
+def create_advanced_search(passport,start_invoice_id,end_invoice_id=None,endpoint='invoice'):
+    search_preference = get_search_preferences(page_size=1000,
+                                               body_fields_only=True)
+    search_body_xml = '<searchRecord xsi:type="ns1:TransactionSearchAdvanced" ' \
+                      'xmlns:ns1="urn:sales_2019_2.transactions.webservices.netsuite.com">' \
+                      '<ns1:criteria><ns1:basic xmlns:ns2="urn:common_2019_2.platform.webservices.netsuite.com">' \
+                      '<ns2:internalIdNumber operator="between" xsi:type="urn1:SearchLongField">' \
+                      '<urn1:searchValue xsi:type="xsd:long">{}</urn1:searchValue>' \
+                      '<urn1:searchValue2 xsi:type="xsd:long">{}</urn1:searchValue2>' \
+                      '</ns2:internalIdNumber>' \
+                      '<ns2:type operator="anyOf" xsi:type="urn1:SearchEnumMultiSelectField">' \
+                      '<urn1:searchValue xsi:type="xsd:string">invoice</urn1:searchValue>' \
+                      '</ns2:type>' \
+                      '</ns1:basic>' \
+                      '</ns1:criteria>' \
+                      '<ns1:columns>' \
+                      '<ns1:basic xmlns:ns2="urn:common_2019_2.platform.webservices.netsuite.com" ' \
+                      'xmlns:ns3="urn:core_2019_2.platform.webservices.netsuite.com">' \
+                      '<ns2:internalId/></ns1:basic> </ns1:columns>' \
+                      '</searchRecord>'.format(start_invoice_id,end_invoice_id)
+
+    soap_xml = search(search_body_xml, _soapheaders={"passport": passport,
+                                                   "searchPreferences": search_preference})
+
+    return soap_xml
+
+def delete_invoice(deleted_list,_soapheaders):
+    head_xml = _soapheaders.get('tokenPassport', '')
+    head_xml += _soapheaders.get('passport', '')
+    record_list = ''
+    for n in deleted_list:
+        record_list += '<urn:baseRef internalId="{}" type="invoice" xsi:type="urn1:RecordRef"/>'.format(n)
+    delete_xml = '<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" ' \
+              'xmlns:urn="urn:messages_2019_2.platform.webservices.netsuite.com" ' \
+              'xmlns:urn1="urn:core_2019_2.platform.webservices.netsuite.com" ' \
+              'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">' \
+              '<soapenv:Header>{}</soapenv:Header>' \
+              '<soapenv:Body><urn:deleteList>{}</urn:deleteList>' \
+              '</soapenv:Body></soapenv:Envelope>'.format(head_xml, record_list)
+    return delete_xml
 
 def create_soap_search_service(passport, endpoint, sync_start_time=None, sync_end_time=None,
                                internal_id=None):

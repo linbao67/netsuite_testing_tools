@@ -1628,8 +1628,8 @@ class NetsuiteClient(object):
 
         df_creditMemo = pd.DataFrame(credit_memo)
         df_credit_memo_line = pd.DataFrame(credit_memo_lines)
-        raw_csv_path = get_csv_path() + '/' + ep.CREDIT_MEMO + '_' + str(self.batch_id) + '_raw.csv'
-        line_csv_path = os.path.join(get_csv_path(), ep.CREDIT_MEMO + '_line_' + str(self.batch_id) + '_raw.csv')
+        raw_csv_path = get_csv_path() + '/' + ep.CASH_REFUND + '_' + str(self.batch_id) + '_raw.csv'
+        line_csv_path = os.path.join(get_csv_path(), ep.CASH_REFUND + '_line_' + str(self.batch_id) + '_raw.csv')
 
         df_creditMemo.to_csv(raw_csv_path,
                              columns=['id', 'credit_note_number', 'amount', 'date', 'currency_internal_id',
@@ -3163,13 +3163,13 @@ class NetsuiteClient(object):
 if __name__ == '__main__':
     testing = NetsuiteClient()
 
-    testing.convert_currency_to_csv()
-    testing.convert_item_to_csv()
-    testing.convert_customer_to_csv()
-    testing.convert_vendor_bill_to_csv()
-    testing.convert_time_bill_to_csv()
-    testing.convert_credit_memo_to_csv()
+    # testing.convert_currency_to_csv()
+    # testing.convert_item_to_csv()
+    # testing.convert_customer_to_csv()
+    # testing.convert_vendor_bill_to_csv()
+    # testing.convert_time_bill_to_csv()
+    # testing.convert_credit_memo_to_csv()
     testing.convert_cash_refund_to_csv()
-    testing.convert_credit_memo_apply_to_csv()
-    testing.convert_customer_payment_apply_to_csv()
-    testing.convert_invoice_to_csv()
+    # testing.convert_credit_memo_apply_to_csv()
+    # testing.convert_customer_payment_apply_to_csv()
+    # testing.convert_invoice_to_csv()

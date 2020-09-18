@@ -143,7 +143,7 @@ if __name__ == '__main__':
 
     result = True
     while result:
-        result = netsuite_client.get_and_delete_invoice_list(5735, 5739)
+        result = netsuite_client.get_and_delete_invoice_list(10276, 27870)
 
 
 

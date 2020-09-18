@@ -705,6 +705,130 @@ class NetsuiteTestingClient(object):
         else:
             print("attributes_currency passed")
 
+    def generate_refund_testing_report(self):
+        df_pubsub = pd.read_csv(os.path.join(get_csv_path('pubsub'),ep.CASH_REFUND + '_' + str(self.batch_id) +
+                                             '.csv'))
+        df_source = pd.read_csv(os.path.join(get_csv_path(), ep.CASH_REFUND + '_' + str(self.batch_id) +
+                                             '_raw.csv'))
+        df_source = df_source[pd.to_datetime(df_source.lastModifiedDate) < datetime.utcnow()]
+
+        count_pubsub = df_pubsub.iloc[:, 0].size
+        count_source = df_source.iloc[:, 0].size
+
+        if count_pubsub != count_source:
+            print(color.BOLD + color.RED +
+                  'The number of credit notes are different, {} from pubsub {} from source'.format(count_pubsub,
+                                                                                                   count_source))
+            print('\033[0m')
+        else:
+            print("Source and Pubsub count are the same.")
+
+        df_tmp = df_pubsub[df_pubsub['attributes_refund_number'].duplicated()]['attributes_refund_number']
+        r = df_tmp.shape[0]
+        if r != 0:
+            print(color.BOLD + 'Credit note in pubsub have duplicated values:' + color.RED)
+            print("Totally got {} credit notes".format(df_tmp.shape[0]))
+            print(df_tmp.values)
+            print('\033[0m')
+
+        df_tmp = df_pubsub[~df_pubsub['attributes_refund_number'].isin(df_source['tranId'])][
+            'attributes_credit_note_number']
+        r = df_tmp.shape[0]
+        if r != 0:
+            print(color.BOLD + 'Credit note CAN NOT FOUND in source:' + color.RED)
+            print("Totally got {} credit notes".format(df_tmp.shape[0]))
+            print(df_tmp.values)
+            print('\033[0m')
+
+        df_tmp = df_source[~df_source['tranId'].isin(df_pubsub['attributes_refund_number'])][
+            'tranId']
+        r = df_tmp.shape[0]
+        if r != 0:
+            print(color.BOLD + 'Credit Notes are missing in pubsub:' + color.RED)
+            print("Totally got {} credit notes".format(df_tmp.shape[0]))
+            print(df_tmp.values)
+            print('\033[0m')
+        else:
+            print("No credit note missing in pubsub")
+
+        df_merge = pd.merge(df_pubsub, df_source, how='left', left_on=['attributes_refund_number'],
+                            right_on=['tranId'])
+
+        df_tmp = df_merge[df_merge['attributes_amount'].round(2) !=
+                          df_merge['total'].round(2)][
+            ['attributes_refund_number', 'attributes_amount', 'total']]
+        r = df_tmp.shape[0]
+        if r != 0:
+            print(color.BOLD + 'attributes_amount failed' + color.RED)
+            print("Totally got {} credit notes".format(df_tmp.shape[0]))
+            print(df_tmp.values)
+            print('\033[0m')
+        else:
+            print("attributes_amount passed")
+
+        df_tmp = df_merge[(df_merge[
+                               'attributes_currency_rate'].fillna(value=False) != df_merge[
+                               'exchangeRate'].fillna(value=False))]['attributes_refund_number']
+
+        r = df_tmp.shape[0]
+        if r != 0:
+            print(color.BOLD + 'attributes_currency_rate failed' + color.RED)
+            print("Totally got {} credit notes".format(df_tmp.shape[0]))
+            print(df_tmp.values)
+            print('\033[0m')
+        else:
+            print("attributes_currency_rate passed")
+
+        df_tmp = df_merge[(df_merge['attributes_date'] != df_merge['tranDate'])][
+            ['attributes_refund_number',
+             'attributes_date',
+             'tranDate']]
+
+        r = df_tmp.shape[0]
+        if r != 0:
+            print(color.BOLD + 'attributes_due_date failed' + color.RED)
+            print("Totally got {} credit notes".format(df_tmp.shape[0]))
+            print(df_tmp.values)
+            print('\033[0m')
+        else:
+            print("attributes_due_date passed")
+
+        df_tmp = df_merge[(df_merge['attributes_created_at']
+                           != df_merge['createdDate'])][
+            ['attributes_refund_number', 'attributes_created_at', 'createdDate']]
+
+        r = df_tmp.shape[0]
+        if r != 0:
+            print(color.BOLD + 'attributes_created_at failed' + color.RED)
+            print("Totally got {} credit notes".format(df_tmp.shape[0]))
+            print(df_tmp.values)
+            print('\033[0m')
+        else:
+            print("attributes_created_at passed")
+
+        df_tmp = df_merge[(df_merge['attributes_updated_at'] != df_merge['lastModifiedDate'])]
+        [['attributes_refund_number', 'attributes_updated_at', 'updated_at']]
+
+        r = df_tmp.shape[0]
+        if r != 0:
+            print(color.BOLD + 'attributes_updated_at failed' + color.RED)
+            print("Totally got {} credit notes".format(df_tmp.shape[0]))
+            print(df_tmp.values)
+            print('\033[0m')
+        else:
+            print("attributes_updated_at passed")
+
+        df_tmp = df_merge[(df_merge['attributes_currency'] != df_merge['currency'])]['attributes_refund_number']
+
+        r = df_tmp.shape[0]
+        if r != 0:
+            print(color.BOLD + 'attributes_currency failed' + color.RED)
+            print("Totally got {} credit notes".format(df_tmp.shape[0]))
+            print(df_tmp.values)
+            print('\033[0m')
+        else:
+            print("attributes_currency passed")
+
     def generate_credit_note_line_testing_report(self):
         df_pubsub = pd.read_csv(os.path.join(get_csv_path('pubsub'), ep.CREDIT_MEMO+'_line_' + str(self.batch_id) +
                                              '.csv'))
@@ -871,5 +995,6 @@ if __name__ == '__main__':
     client = NetsuiteTestingClient()
     # client.generate_credit_memo_testing_report()
     # client.generate_credit_note_line_testing_report()
-    client.generate_invoice_line_testing_report()
+    # client.generate_invoice_line_testing_report()
     # client.generate_invoice_testing_report()
+    client.generate_refund_testing_report()

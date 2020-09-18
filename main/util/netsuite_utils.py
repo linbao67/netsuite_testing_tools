@@ -342,7 +342,7 @@ def search_internal_id_criteria(searchValue, operator):
     return internal_id_xml
 
 def create_advanced_search(passport,start_invoice_id,end_invoice_id=None,endpoint='invoice'):
-    search_preference = get_search_preferences(page_size=1000,
+    search_preference = get_search_preferences(page_size=100,
                                                body_fields_only=True)
     search_body_xml = '<searchRecord xsi:type="ns1:TransactionSearchAdvanced" ' \
                       'xmlns:ns1="urn:sales_2019_2.transactions.webservices.netsuite.com">' \
